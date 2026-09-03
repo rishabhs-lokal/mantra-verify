@@ -1,19 +1,26 @@
-"""FastAPI app for verifying spoken Hindu mantras against reference text.
+"""FastAPI app for verifying spoken Hindu mantras against reference text,
+plus Vyas: a conversational sage character who talks through the practice.
 
-Transcription is delegated to OpenRouter's cloud speech-to-text endpoint
-(openai/whisper-large-v3) rather than running a model locally.
+Transcription, chat, and voice synthesis are all delegated to OpenRouter's
+cloud APIs (openai/whisper-large-v3, a chat model, and a TTS model
+respectively) rather than running anything locally.
 """
 
-import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
-import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import counter
+import history
+import vyas
 from matcher import PASS_THRESHOLD, completion_stats, normalize_text, score_match, word_diff
+from openrouter_client import post as openrouter_post
+from openrouter_client import require_api_key
 
 load_dotenv()
 
@@ -22,12 +29,11 @@ app = FastAPI(title="Mantra Verify")
 OPENROUTER_TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 TRANSCRIPTION_MODEL = "openai/whisper-large-v3"
 
-# Whisper has no dedicated Sanskrit language code; Hindi is the closest
-# phonetic/script match for Devanagari mantra chanting and is what every
-# transcription request below is hinted with.
+# Whisper has a dedicated Sanskrit code ("sa"), but it's a low-resource
+# language for Whisper's training data — Hindi ("hi") is the default here
+# since it's better-supported and phonetically close to Devanagari mantra
+# chanting; pass a different `language` value per-request to compare.
 TRANSCRIPTION_LANGUAGE = "hi"
-
-_HTTP_TIMEOUT = httpx.Timeout(65.0, connect=10.0)
 
 
 class VerifyResponse(BaseModel):
@@ -57,44 +63,35 @@ class CountResponse(BaseModel):
     last_verified_at: Optional[str]
 
 
-async def transcribe_audio(audio_bytes: bytes, filename: str, content_type: str) -> str:
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+    language: str = "hi"
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    language: str
+
+
+class SpeakRequest(BaseModel):
+    text: str
+
+
+async def transcribe_audio(
+    audio_bytes: bytes, filename: str, content_type: str, language: str
+) -> str:
     """Send audio to OpenRouter for transcription and return the transcript text.
 
     Raises HTTPException with a client-appropriate status code on any failure
     (missing API key, upstream auth/rate-limit/server errors, timeouts).
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Server misconfiguration: OPENROUTER_API_KEY is not set.",
-        )
+    api_key = require_api_key()
 
     files = {"file": (filename, audio_bytes, content_type or "application/octet-stream")}
-    data = {"model": TRANSCRIPTION_MODEL, "language": TRANSCRIPTION_LANGUAGE}
-    headers = {"Authorization": f"Bearer {api_key}"}
+    data = {"model": TRANSCRIPTION_MODEL, "language": language}
 
-    try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.post(
-                OPENROUTER_TRANSCRIPTION_URL, headers=headers, data=data, files=files
-            )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Transcription request timed out.")
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Could not reach OpenRouter: {exc}")
-
-    if response.status_code == 401:
-        raise HTTPException(status_code=502, detail="OpenRouter rejected the API key.")
-    if response.status_code == 429:
-        raise HTTPException(
-            status_code=429, detail="OpenRouter rate limit exceeded, please retry shortly."
-        )
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenRouter transcription failed ({response.status_code}): {response.text[:300]}",
-        )
+    response = await openrouter_post(OPENROUTER_TRANSCRIPTION_URL, api_key, data=data, files=files)
 
     try:
         payload = response.json()
@@ -122,12 +119,15 @@ async def verify(
     session_id: str = Form(...),
     mantra_id: str = Form(...),
     target_count: int = Form(108),
+    language: str = Form(TRANSCRIPTION_LANGUAGE),
 ):
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
 
-    transcript = await transcribe_audio(audio_bytes, audio.filename or "audio.wav", audio.content_type)
+    transcript = await transcribe_audio(
+        audio_bytes, audio.filename or "audio.wav", audio.content_type, language
+    )
 
     score = score_match(reference_text, transcript)
     passed = score >= PASS_THRESHOLD
@@ -138,6 +138,15 @@ async def verify(
         count, last_verified_at = counter.increment(session_id, mantra_id)
     else:
         count, last_verified_at = counter.get_count(session_id, mantra_id)
+
+    history.log_verification(
+        session_id=session_id,
+        mantra_id=mantra_id,
+        score=score,
+        passed=passed,
+        completion_ratio=stats["completion_ratio"],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
     remaining = max(target_count - count, 0)
 
@@ -183,3 +192,31 @@ async def reset_count(session_id: str, mantra_id: str):
         "count": 0,
         "last_verified_at": None,
     }
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    if request.language not in vyas.LANGUAGE_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported language '{request.language}'. Supported: {sorted(vyas.LANGUAGE_NAMES)}",
+        )
+
+    recent_history = history.get_recent(request.session_id)
+    reply = await vyas.generate_reply(request.message, recent_history, request.language)
+    return ChatResponse(reply=reply, language=request.language)
+
+
+@app.post("/speak")
+async def speak(request: SpeakRequest):
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+    audio_bytes = await vyas.synthesize_speech(request.text)
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+# Registered last so the API routes above always match first — this mount's
+# prefix ("/") would otherwise catch every request before they're reached.
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

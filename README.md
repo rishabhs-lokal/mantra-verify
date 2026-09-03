@@ -1,10 +1,13 @@
 # mantra_verify
 
-FastAPI backend that verifies a spoken Hindu mantra against a Devanagari reference
-text. Transcription runs on OpenRouter's cloud speech-to-text endpoint
-(`openai/whisper-large-v3`); matching is local fuzzy text comparison
-(rapidfuzz). Tracks verified repetition counts per session toward a target
-(e.g. 108 for a mala).
+FastAPI backend + static frontend for verifying a spoken Hindu mantra against
+a Devanagari reference text, with **Vyas** — a conversational sage character
+who talks through your practice. Transcription, conversation, and voice
+synthesis all run on OpenRouter's cloud APIs (`openai/whisper-large-v3` for
+speech-to-text, a chat model for Vyas's replies, and a TTS model for his
+voice); text matching is local (rapidfuzz). Tracks verified repetition counts
+per session toward a target (e.g. 108 for a mala), and logs session history
+so Vyas can talk about your actual practice.
 
 ## Setup
 
@@ -28,6 +31,11 @@ fail, with a clear 500, until `.env` has a real key in it.
 uvicorn main:app --reload
 ```
 
+Open http://127.0.0.1:8000/ for the frontend — Vyas's character, the mantra
+recorder, and the chat box. It's a static page (`static/index.html` +
+`style.css` + `app.js`) served directly by FastAPI, same origin as the API,
+so there's no CORS setup to worry about.
+
 ## API
 
 ### `GET /health`
@@ -45,6 +53,7 @@ Multipart form:
 | `session_id` | string | yes | Client-generated session identifier |
 | `mantra_id` | string | yes | Identifier for the mantra being chanted |
 | `target_count` | int | no (default `108`) | Repetitions target for `mala_complete` |
+| `language` | string | no (default `hi`) | Whisper language hint — see `vyas.LANGUAGE_NAMES` for the full supported set |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/verify \
@@ -52,8 +61,13 @@ curl -X POST http://127.0.0.1:8000/verify \
   -F "reference_text=ॐ नमः शिवाय" \
   -F "session_id=demo-session-1" \
   -F "mantra_id=om-namah-shivaya" \
-  -F "target_count=108"
+  -F "target_count=108" \
+  -F "language=hi"
 ```
+
+Every `/verify` call (pass or fail) is also logged to `data/history.json` via
+`history.py`, so Vyas's chat replies can reference real past attempts —
+score, pass/fail, completion ratio, and timestamp — not just the current one.
 
 Response fields are ordered `score`, `completion_ratio`, `passed`, `count`,
 `target_count`, `remaining`, `mala_complete` first — those are what a client
@@ -102,11 +116,60 @@ session+mantra pair.
 Resets the count (and `last_verified_at`) for one mantra under that session
 back to zero/`null`.
 
+### `POST /chat`
+
+JSON body: `{"session_id": "...", "message": "...", "language": "hi"}`.
+
+Sends the message to a chat model (`vyas.CHAT_MODEL`, `openai/gpt-4o-mini` by
+default — a different model from Whisper, since transcription and
+conversation are different tasks) via OpenRouter, with a system prompt that
+establishes Vyas's persona and includes a summary of the last 5 `/verify`
+attempts logged for that `session_id` from `history.py`. Returns
+`{"reply": "...", "language": "hi"}`. `language` must be one of the codes in
+`vyas.LANGUAGE_NAMES` (the same Devanagari-adjacent language set `/verify`
+transcribes) — a 400 otherwise.
+
+### `POST /speak`
+
+JSON body: `{"text": "..."}`. Sends the text to OpenRouter's TTS endpoint
+(`vyas.TTS_MODEL`) and returns raw `audio/mpeg` bytes (not JSON) — the
+frontend plays this directly. `/chat` and `/speak` are deliberately separate
+calls rather than one combined endpoint, so the frontend can show Vyas's text
+reply immediately without waiting on speech synthesis, and so a TTS failure
+doesn't take down the whole conversation.
+
+**Error responses on `/chat` and `/speak`** follow the same convention as
+`/verify`: `429` (rate limit), `502` (key rejected or other OpenRouter
+error), `504` (timeout), `500` (`OPENROUTER_API_KEY` not set). This mapping
+lives in `openrouter_client.py`, shared by all three OpenRouter call sites
+(`/verify`, `/chat`, `/speak`) instead of being duplicated per endpoint.
+
+## Vyas's portrait
+
+The character illustration in `static/index.html` is a hand-built SVG
+placeholder — recognizable (white hair/beard, tripundra, saffron robe,
+raised mudra, banyan roots) but stylized, not photorealistic.
+`scripts/generate_vyas_portrait.py` generates a real image via OpenRouter's
+image API (`POST /api/v1/images`) once a real `OPENROUTER_API_KEY` is in
+`.env`:
+
+```bash
+source venv/bin/activate
+python scripts/generate_vyas_portrait.py
+```
+
+Saves to `static/vyas-portrait.png`. Edit the `PROMPT` or `IMAGE_MODEL`
+constant in that script and re-run to iterate.
+
 ## Notes on transcription language
 
-Whisper has no dedicated Sanskrit language code. Since mantra reference text
-here is Devanagari, `language="hi"` (Hindi) is used as the closest phonetic
-match — see `main.py`'s `TRANSCRIPTION_LANGUAGE` constant.
+Whisper actually does have a dedicated Sanskrit code (`sa`) — despite what
+you may read elsewhere (including earlier notes in this project). It's just
+a much lower-resource language in Whisper's training data than Hindi, so
+`language="hi"` is the default here as a likely-more-accurate stand-in for
+Devanagari mantra chanting, not because `sa` doesn't exist. Pass a different
+`language` value per-request (on `/verify`) to compare the two yourself —
+see `vyas.LANGUAGE_NAMES` for the full set this app recognizes.
 
 ## Notes on text normalization
 
