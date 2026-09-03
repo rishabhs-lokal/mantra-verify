@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Check, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
 import { vedApi } from './api';
 import { practices, preferences } from './data';
-import type { FlowType, PracticeCard, Screen } from './types';
+import type { FlowType, PracticeCard } from './types';
+import { useBackNavigation } from './useBackNavigation';
 
 const prompts = [
   'Main shant hoon.',
@@ -12,12 +13,10 @@ const prompts = [
 ];
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('home');
-  const [flow, setFlow] = useState<FlowType | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [count, setCount] = useState(0);
   const [promptIndex, setPromptIndex] = useState(0);
   const [toast, setToast] = useState('');
+
+  const { screen, flow, selectedId, count, setCount, navigate, goBack } = useBackNavigation(setToast);
 
   const selected = useMemo(
     () => flow && selectedId ? practices[flow].find((item) => item.id === selectedId) ?? null : null,
@@ -30,23 +29,17 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  function goHome() {
-    setScreen('home'); setFlow(null); setSelectedId(null); setCount(0);
-  }
-
-  function goBack() {
-    if (screen === 'room') { setScreen('choices'); setSelectedId(null); setCount(0); return; }
-    if (screen === 'choices') { setScreen('preferences'); setFlow(null); return; }
-    goHome();
+  function openPreferences() {
+    navigate({ screen: 'preferences', flow: null, selectedId: null, count: 0 });
   }
 
   function chooseFlow(type: FlowType) {
-    setFlow(type); setScreen('choices');
+    navigate({ screen: 'choices', flow: type, selectedId: null, count: 0 });
   }
 
   function enterRoom(item: PracticeCard) {
     if (!flow) return;
-    setSelectedId(item.id); setCount(0); setScreen('room');
+    navigate({ screen: 'room', flow, selectedId: item.id, count: 0 });
     void vedApi.start({ type: flow, item_id: item.id, count: 0 });
   }
 
@@ -67,7 +60,7 @@ function App() {
     <main className="app-shell">
       <Topbar showBack={screen !== 'home'} onBack={goBack} />
       <div className="page-transition" key={screen + (selectedId ?? '')}>
-        {screen === 'home' && <Home onOpen={() => setScreen('preferences')} />}
+        {screen === 'home' && <Home onOpen={openPreferences} />}
         {screen === 'preferences' && <Preferences onChoose={chooseFlow} />}
         {screen === 'choices' && flow && <Choices flow={flow} onChoose={enterRoom} />}
         {screen === 'room' && flow && selected && (
