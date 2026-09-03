@@ -132,11 +132,20 @@ transcribes) — a 400 otherwise.
 ### `POST /speak`
 
 JSON body: `{"text": "..."}`. Sends the text to OpenRouter's TTS endpoint
-(`vyas.TTS_MODEL`) and returns raw `audio/mpeg` bytes (not JSON) — the
-frontend plays this directly. `/chat` and `/speak` are deliberately separate
-calls rather than one combined endpoint, so the frontend can show Vyas's text
-reply immediately without waiting on speech synthesis, and so a TTS failure
-doesn't take down the whole conversation.
+(`vyas.TTS_MODEL`, `google/gemini-3.1-flash-tts-preview`) and returns
+`audio/wav` bytes (not JSON) — the frontend plays this directly. `/chat` and
+`/speak` are deliberately separate calls rather than one combined endpoint,
+so the frontend can show Vyas's text reply immediately without waiting on
+speech synthesis, and so a TTS failure doesn't take down the whole
+conversation.
+
+Note: OpenRouter's own docs reference an OpenAI TTS model
+(`openai/gpt-4o-mini-tts-...`) that does not actually exist on the platform —
+confirmed by querying the live `/api/v1/models?output_modalities=speech`
+catalog, which has no OpenAI entries at all. Gemini's TTS is used instead.
+It only outputs raw PCM (no mp3/wav option), so `vyas.synthesize_speech`
+wraps it in a WAV header (`vyas._pcm_to_wav`) before returning it — a plain
+`<audio>` tag can't play headerless PCM directly.
 
 **Error responses on `/chat` and `/speak`** follow the same convention as
 `/verify`: `429` (rate limit), `502` (key rejected or other OpenRouter
@@ -146,20 +155,20 @@ lives in `openrouter_client.py`, shared by all three OpenRouter call sites
 
 ## Vyas's portrait
 
-The character illustration in `static/index.html` is a hand-built SVG
-placeholder — recognizable (white hair/beard, tripundra, saffron robe,
-raised mudra, banyan roots) but stylized, not photorealistic.
-`scripts/generate_vyas_portrait.py` generates a real image via OpenRouter's
-image API (`POST /api/v1/images`) once a real `OPENROUTER_API_KEY` is in
-`.env`:
+`static/vyas-portrait.png` is generated via OpenRouter's image API
+(`POST /api/v1/images`, `black-forest-labs/flux.2-pro`) by
+`scripts/generate_vyas_portrait.py`:
 
 ```bash
 source venv/bin/activate
 python scripts/generate_vyas_portrait.py
 ```
 
-Saves to `static/vyas-portrait.png`. Edit the `PROMPT` or `IMAGE_MODEL`
-constant in that script and re-run to iterate.
+This overwrites `static/vyas-portrait.png` — edit the `PROMPT` or
+`IMAGE_MODEL` constant in that script and re-run to get a different result.
+An earlier hand-built SVG placeholder lived directly in `index.html` before
+this; it's gone now that a real portrait exists, but the git history has it
+if you ever want to compare.
 
 ## Notes on transcription language
 
@@ -170,6 +179,15 @@ a much lower-resource language in Whisper's training data than Hindi, so
 Devanagari mantra chanting, not because `sa` doesn't exist. Pass a different
 `language` value per-request (on `/verify`) to compare the two yourself —
 see `vyas.LANGUAGE_NAMES` for the full set this app recognizes.
+
+**Known gap, found via live testing**: Whisper often transcribes the ॐ
+symbol (U+0950) as the phonetically-spelled-out ओम (two characters) instead
+of the symbol itself. `normalize_text` doesn't currently treat these as
+equivalent, so a mantra starting with ॐ can score lower than it should for
+reasons that have nothing to do with the person's recitation. Worth adding
+to `normalize_text` if mantras starting with ॐ are common in your reference
+texts — not fixed yet since it's a judgment call on how far normalization
+should go, not an obvious bug fix.
 
 ## Notes on text normalization
 

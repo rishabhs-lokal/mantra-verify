@@ -3,9 +3,16 @@
 Chat replies and voice synthesis both go through OpenRouter, reusing the
 same OPENROUTER_API_KEY as transcription — no separate account/key needed
 for either. Chat uses OpenRouter's chat-completions endpoint (a text model,
-distinct from Whisper); voice uses OpenRouter's /audio/speech endpoint
-(OpenAI's gpt-4o-mini-tts).
+distinct from Whisper); voice uses OpenRouter's /audio/speech endpoint.
+
+OpenAI does not currently offer a TTS model through OpenRouter's speech
+endpoint (verified against the live `/api/v1/models?output_modalities=speech`
+catalog — OpenRouter's own docs reference an OpenAI TTS model id that
+doesn't actually exist there). Using Gemini's TTS instead, which does.
 """
+
+import io
+import wave
 
 from openrouter_client import post as openrouter_post
 from openrouter_client import require_api_key
@@ -14,8 +21,16 @@ OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech"
 
 CHAT_MODEL = "openai/gpt-4o-mini"
-TTS_MODEL = "openai/gpt-4o-mini-tts-2025-12-15"
-TTS_VOICE = "alloy"
+TTS_MODEL = "google/gemini-3.1-flash-tts-preview"
+TTS_VOICE = "Charon"
+
+# Gemini's TTS only outputs raw PCM (no mp3/wav option) at a fixed rate this
+# app doesn't control — confirmed via the endpoint's own response headers,
+# not documented anywhere. synthesize_speech() wraps it in a WAV header
+# using these values so browsers can play it without a decoder.
+TTS_SAMPLE_RATE_HZ = 24000
+TTS_SAMPLE_WIDTH_BYTES = 2  # 16-bit signed PCM
+TTS_CHANNELS = 1
 
 # Languages Whisper (and therefore this app's /verify) can transcribe for
 # Devanagari-adjacent mantra practice — Vyas is limited to the same set so
@@ -99,14 +114,14 @@ async def generate_reply(message: str, history: list, language: str) -> str:
 
 
 async def synthesize_speech(text: str) -> bytes:
-    """Turn text into spoken audio (MP3 bytes) via OpenRouter's TTS endpoint."""
+    """Turn text into spoken audio (WAV bytes) via OpenRouter's TTS endpoint."""
     api_key = require_api_key()
 
     payload = {
         "model": TTS_MODEL,
         "input": text,
         "voice": TTS_VOICE,
-        "response_format": "mp3",
+        "response_format": "pcm",
     }
 
     response = await openrouter_post(
@@ -115,4 +130,14 @@ async def synthesize_speech(text: str) -> bytes:
         json=payload,
         headers={"Content-Type": "application/json"},
     )
-    return response.content
+    return _pcm_to_wav(response.content)
+
+
+def _pcm_to_wav(pcm_bytes: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(TTS_CHANNELS)
+        wav_file.setsampwidth(TTS_SAMPLE_WIDTH_BYTES)
+        wav_file.setframerate(TTS_SAMPLE_RATE_HZ)
+        wav_file.writeframes(pcm_bytes)
+    return buffer.getvalue()

@@ -214,7 +214,7 @@ async def speak(request: SpeakRequest):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty.")
     audio_bytes = await vyas.synthesize_speech(request.text)
-    return Response(content=audio_bytes, media_type="audio/mpeg")
+    return Response(content=audio_bytes, media_type="audio/wav")
 
 
 # Registered last so the API routes above always match first — this mount's

@@ -41,7 +41,9 @@ PROMPT = (
 
 def main():
     load_dotenv(Path(__file__).parent.parent / ".env")
-    api_key = require_api_key()
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        sys.exit("OPENROUTER_API_KEY is not set in .env")
 
     payload = {
         "model": IMAGE_MODEL,

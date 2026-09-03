@@ -58,30 +58,34 @@ body {
   text-align: center;
 }
 
-.vyas-figure svg {
-  width: 100%;
+.vyas-figure {
+  border-radius: 16px;
+  overflow: hidden;
+  display: inline-block;
   max-width: 340px;
+}
+
+.vyas-figure img {
+  display: block;
+  width: 100%;
+  border-radius: 16px;
   filter: drop-shadow(0 8px 20px rgba(122, 46, 29, 0.25));
+  transition: filter 0.3s ease, transform 0.3s ease;
 }
 
-.vyas-figure.speaking #auraGroup {
-  transform-origin: 200px 190px;
-  animation: auraPulse 0.6s ease-in-out infinite alternate;
+.vyas-figure.speaking img {
+  animation: vyasSpeakingGlow 0.9s ease-in-out infinite alternate;
 }
 
-.vyas-figure.speaking #headGroup {
-  transform-origin: 200px 230px;
-  animation: headBob 0.8s ease-in-out infinite;
-}
-
-@keyframes auraPulse {
-  from { transform: scale(1); opacity: 0.85; }
-  to { transform: scale(1.08); opacity: 1; }
-}
-
-@keyframes headBob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
+@keyframes vyasSpeakingGlow {
+  from {
+    filter: drop-shadow(0 8px 20px rgba(122, 46, 29, 0.25)) drop-shadow(0 0 0 rgba(255, 179, 71, 0));
+    transform: scale(1);
+  }
+  to {
+    filter: drop-shadow(0 8px 28px rgba(122, 46, 29, 0.35)) drop-shadow(0 0 30px rgba(255, 179, 71, 0.65));
+    transform: scale(1.015);
+  }
 }
 
 .vyas-status {
