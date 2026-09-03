@@ -2,7 +2,7 @@ import unicodedata
 
 import pytest
 
-from matcher import PASS_THRESHOLD, normalize_text, score_match, word_diff
+from matcher import PASS_THRESHOLD, completion_stats, normalize_text, score_match, word_diff
 
 OM_NAMAH_SHIVAYA = "ॐ नमः शिवाय"
 
@@ -161,3 +161,57 @@ class TestWordDiff:
         result = word_diff("ॐ नमः शिवाय।", "ॐ नमः, शिवाय")
         assert _tags(result, "missing") == []
         assert _tags(result, "extra") == []
+
+
+class TestCompletionStats:
+    def test_full_recitation_scores_ratio_1(self):
+        diff = word_diff(OM_NAMAH_SHIVAYA, OM_NAMAH_SHIVAYA)
+        stats = completion_stats(diff)
+        assert stats == {"completion_ratio": 1.0, "words_matched": 3, "words_expected": 3}
+
+    def test_stopping_partway_through_reduces_ratio(self):
+        # Only said the first 2 of 3 words — simulates giving up mid-mantra.
+        diff = word_diff(OM_NAMAH_SHIVAYA, "ॐ नमः")
+        stats = completion_stats(diff)
+        assert stats["words_matched"] == 2
+        assert stats["words_expected"] == 3
+        assert stats["completion_ratio"] == pytest.approx(2 / 3)
+
+    def test_completely_disjoint_text_scores_ratio_0(self):
+        diff = word_diff(OM_NAMAH_SHIVAYA, "गंगा जल पवित्र")
+        stats = completion_stats(diff)
+        assert stats["completion_ratio"] == 0.0
+
+    def test_empty_reference_is_vacuously_complete(self):
+        diff = word_diff("", "")
+        stats = completion_stats(diff)
+        assert stats == {"completion_ratio": 1.0, "words_matched": 0, "words_expected": 0}
+
+    def test_extra_spoken_words_do_not_affect_ratio(self):
+        # Filler/false-start words on top of a full recitation shouldn't
+        # penalize completion — every reference word was still said.
+        diff = word_diff(OM_NAMAH_SHIVAYA, f"उम {OM_NAMAH_SHIVAYA} उम")
+        stats = completion_stats(diff)
+        assert stats["completion_ratio"] == 1.0
+        assert stats["words_expected"] == 3
+
+    def test_ratio_is_length_normalized_across_mantra_sizes(self):
+        # Missing one word out of a short mantra vs. a long one should land
+        # at very different ratios, even though it's "one word" in both —
+        # this is the whole point of a ratio over a raw missing-word count.
+        short_diff = word_diff("ॐ नमः शिवाय", "ॐ नमः")
+        long_reference = " ".join(["शिवाय"] * 30)
+        long_spoken = " ".join(["शिवाय"] * 29)
+        long_diff = word_diff(long_reference, long_spoken)
+
+        short_ratio = completion_stats(short_diff)["completion_ratio"]
+        long_ratio = completion_stats(long_diff)["completion_ratio"]
+
+        assert short_ratio == pytest.approx(2 / 3)
+        assert long_ratio == pytest.approx(29 / 30)
+        assert long_ratio > short_ratio
+
+    def test_repeated_word_multiplicity_is_respected(self):
+        diff = word_diff("राम राम राम", "राम राम")
+        stats = completion_stats(diff)
+        assert stats == {"completion_ratio": pytest.approx(2 / 3), "words_matched": 2, "words_expected": 3}

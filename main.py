@@ -13,7 +13,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 import counter
-from matcher import PASS_THRESHOLD, normalize_text, score_match, word_diff
+from matcher import PASS_THRESHOLD, completion_stats, normalize_text, score_match, word_diff
 
 load_dotenv()
 
@@ -32,6 +32,7 @@ _HTTP_TIMEOUT = httpx.Timeout(65.0, connect=10.0)
 
 class VerifyResponse(BaseModel):
     score: float
+    completion_ratio: float
     passed: bool
     count: int
     target_count: int
@@ -41,6 +42,8 @@ class VerifyResponse(BaseModel):
     reference_normalized: str
     spoken_normalized: str
     word_diff: list
+    words_matched: int
+    words_expected: int
     last_verified_at: Optional[str]
 
 
@@ -128,6 +131,8 @@ async def verify(
 
     score = score_match(reference_text, transcript)
     passed = score >= PASS_THRESHOLD
+    diff = word_diff(reference_text, transcript)
+    stats = completion_stats(diff)
 
     if passed:
         count, last_verified_at = counter.increment(session_id, mantra_id)
@@ -138,6 +143,7 @@ async def verify(
 
     return VerifyResponse(
         score=score,
+        completion_ratio=stats["completion_ratio"],
         passed=passed,
         count=count,
         target_count=target_count,
@@ -146,7 +152,9 @@ async def verify(
         transcript=transcript,
         reference_normalized=normalize_text(reference_text),
         spoken_normalized=normalize_text(transcript),
-        word_diff=word_diff(reference_text, transcript),
+        word_diff=diff,
+        words_matched=stats["words_matched"],
+        words_expected=stats["words_expected"],
         last_verified_at=last_verified_at,
     )
 

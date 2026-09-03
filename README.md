@@ -55,18 +55,34 @@ curl -X POST http://127.0.0.1:8000/verify \
   -F "target_count=108"
 ```
 
-Response fields are ordered `score`, `passed`, `count`, `target_count`,
-`remaining`, `mala_complete` first — those are what a client reacts to
-immediately — followed by `transcript`, `reference_normalized`,
-`spoken_normalized`, `word_diff`, `last_verified_at`.
+Response fields are ordered `score`, `completion_ratio`, `passed`, `count`,
+`target_count`, `remaining`, `mala_complete` first — those are what a client
+reacts to immediately — followed by `transcript`, `reference_normalized`,
+`spoken_normalized`, `word_diff`, `words_matched`, `words_expected`,
+`last_verified_at`.
 
 `word_diff` is an ordered list of `[word, tag]` pairs (`tag` is `"match"`,
 `"missing"`, or `"extra"`) computed with `difflib.SequenceMatcher` over the
 normalized word sequences, so it reflects word position, not just set
 differences.
 
+`completion_ratio` (`words_matched / words_expected`) is a separate signal
+from `score`: it tells you what fraction of the reference mantra's words
+showed up in the transcript at all, regardless of pronunciation accuracy or
+word order elsewhere. It's normalized to 0.0–1.0 so it means the same thing
+for a 3-word mantra as a 30-word one — use it to detect "gave up partway
+through" as distinct from "recited it all but got some words wrong," which
+`score` alone conflates into a single number. Extra spoken words (filler,
+false starts) never count against it — `words_expected` only counts
+reference words. There's no fixed "completion passed" threshold on purpose:
+the same ratio drop (e.g. missing one word) means something very different
+for a short mantra than a long one, so pick a per-`mantra_id` bar if you need
+one, the same way `PASS_THRESHOLD` may eventually need to vary by mantra
+(see below).
+
 A verification only increments `count` when `score >= 82.0`
-(`matcher.PASS_THRESHOLD`).
+(`matcher.PASS_THRESHOLD`) — `completion_ratio` does not currently affect
+`passed` or the counter, it's informational only.
 
 **Error responses** — `/verify` returns clear errors instead of crashing:
 - `400` — empty/missing audio file

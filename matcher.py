@@ -99,3 +99,26 @@ def word_diff(reference_text: str, spoken_text: str) -> list:
             diff.extend([word, "extra"] for word in spoken_words[j1:j2])
 
     return diff
+
+
+def completion_stats(diff: list) -> dict:
+    """Derive how much of the reference mantra was actually recited, from a
+    word_diff() result.
+
+    "words_expected" only counts reference words (match + missing) — extra
+    spoken words (filler, false starts) don't count for or against
+    completion, since that's a question of whether the required content was
+    said, not whether anything extra was added. The ratio is normalized to
+    0.0-1.0 regardless of mantra length, so a fixed ratio threshold behaves
+    consistently across a 3-word mantra and a 30-word one, unlike a raw
+    missing-word count would.
+    """
+    words_matched = sum(1 for _, tag in diff if tag == "match")
+    words_expected = sum(1 for _, tag in diff if tag in ("match", "missing"))
+    ratio = 1.0 if words_expected == 0 else words_matched / words_expected
+
+    return {
+        "completion_ratio": ratio,
+        "words_matched": words_matched,
+        "words_expected": words_expected,
+    }
