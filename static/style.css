@@ -165,6 +165,10 @@ select, textarea, input[type="text"], input[type="number"] {
   cursor: pointer;
 }
 
+#hear-mantra-btn {
+  margin-bottom: 1rem;
+}
+
 .btn-primary {
   background: var(--saffron);
   color: white;

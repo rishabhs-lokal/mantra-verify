@@ -33,36 +33,45 @@ function setVyasStatus(text) {
   vyasStatus.textContent = text;
 }
 
-async function speakAsVyas(text) {
-  try {
-    const response = await fetch("/speak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || `Speech synthesis failed (${response.status})`);
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    vyasAudio.src = url;
+// Resolves only once playback actually finishes (or errors out) — not just
+// once it starts. `vyasAudio.play()` alone resolves on playback START, which
+// isn't enough for callers that need to know when Vyas has stopped talking
+// (e.g. before resuming mic listening, so his own voice isn't picked up as
+// a false chant via speaker-to-mic leakage).
+function speakAsVyas(text) {
+  return new Promise(async (resolve) => {
+    try {
+      const response = await fetch("/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Speech synthesis failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      vyasAudio.src = url;
 
-    vyasAudio.onplay = () => {
-      vyasFigure.classList.add("speaking");
-      setVyasStatus("Vyas is speaking…");
-    };
-    vyasAudio.onended = vyasAudio.onpause = () => {
-      vyasFigure.classList.remove("speaking");
+      vyasAudio.onplay = () => {
+        vyasFigure.classList.add("speaking");
+        setVyasStatus("Vyas is speaking…");
+      };
+      vyasAudio.onended = vyasAudio.onpause = () => {
+        vyasFigure.classList.remove("speaking");
+        setVyasStatus("Vyas is listening.");
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+
+      await vyasAudio.play();
+    } catch (err) {
+      console.error(err);
       setVyasStatus("Vyas is listening.");
-      URL.revokeObjectURL(url);
-    };
-
-    await vyasAudio.play();
-  } catch (err) {
-    console.error(err);
-    setVyasStatus("Vyas is listening.");
-  }
+      resolve(); // resolve even on failure so awaiters never hang forever
+    }
+  });
 }
 
 // ---- Mantra recording + /verify ----
@@ -255,11 +264,14 @@ const SESSION_RECHANT_PROMPT_MS = 10000; // silence since the last COUNTED chant
 const SESSION_PAUSE_MS = 15000; // silence since the last COUNTED chant before the session auto-pauses
 const SESSION_POLL_INTERVAL_MS = 150;
 
+const SESSION_ERROR_STREAK_LIMIT = 3; // this many consecutive not-counted attempts triggers re-teaching + pause
+
 const RECHANT_PROMPT_TEXT = "I notice a pause. Please continue chanting whenever you are ready.";
 // PLACEHOLDER — replace with the real line once you have it.
 const COMPLETION_PLACEHOLDER_TEXT = "Well done. You have completed this round of chanting. May peace be with you.";
 
 const targetCountInput = document.getElementById("target-count");
+const hearMantraBtn = document.getElementById("hear-mantra-btn");
 const sessionStartBtn = document.getElementById("session-start-btn");
 const sessionStopBtn = document.getElementById("session-stop-btn");
 const sessionResumeBtn = document.getElementById("session-resume-btn");
@@ -268,6 +280,15 @@ const sessionCounterEl = document.getElementById("session-counter");
 const sessionStatus = document.getElementById("session-status");
 const sessionError = document.getElementById("session-error");
 const sessionLog = document.getElementById("session-log");
+
+// Available even outside a session — lets you check the correct
+// pronunciation any time. Guards against picking up Vyas's own voice as a
+// false chant if a session happens to be listening while this plays.
+hearMantraBtn.addEventListener("click", async () => {
+  if (session) session.vyasSpeaking = true;
+  await speakAsVyas(document.getElementById("reference-text").value);
+  if (session) session.vyasSpeaking = false;
+});
 
 function clampTargetCount() {
   let value = parseInt(targetCountInput.value, 10);
@@ -285,10 +306,11 @@ function setSessionStatus(text) {
   sessionStatus.textContent = text;
 }
 
-function logSessionAttempt(text, counted) {
+function logSessionAttempt(text, counted, repetitionsCounted) {
   const div = document.createElement("div");
   div.className = `session-log-entry ${counted ? "counted" : "rejected"}`;
-  div.textContent = `${counted ? "✓" : "✗"} "${text}"`;
+  const countLabel = repetitionsCounted > 1 ? ` (×${repetitionsCounted})` : "";
+  div.textContent = `${counted ? "✓" : "✗"}${countLabel} "${text}"`;
   sessionLog.prepend(div);
 }
 
@@ -338,6 +360,8 @@ async function startChantingSession() {
     currentChunks: [],
     lastCountedChantAt: Date.now(),
     promptedForRechant: false,
+    consecutiveErrors: 0,
+    vyasSpeaking: false,
     isPaused: false,
     pollTimer: null,
   };
@@ -354,6 +378,17 @@ async function startChantingSession() {
     return;
   }
 
+  // Say the mantra once before listening starts, so the mic isn't live
+  // while Vyas is talking (speaker-to-mic leakage could otherwise register
+  // as a false chant), and so you have a correct-pronunciation reference
+  // before you begin.
+  setSessionStatus("Vyas is demonstrating the mantra…");
+  session.vyasSpeaking = true;
+  await speakAsVyas(document.getElementById("reference-text").value);
+  session.vyasSpeaking = false;
+
+  if (!session) return; // session may have been stopped while Vyas was speaking
+
   setSessionStatus("Listening…");
   session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
 }
@@ -369,7 +404,7 @@ function getRMS() {
 }
 
 function pollSession() {
-  if (!session || session.isPaused) return;
+  if (!session || session.isPaused || session.vyasSpeaking) return;
 
   const speaking = getRMS() > SESSION_SPEECH_RMS_THRESHOLD;
 
@@ -430,15 +465,22 @@ async function submitChant(blob) {
       throw new Error(data.detail || `Chant check failed (${response.status})`);
     }
 
-    if (data.transcript) logSessionAttempt(data.transcript, data.counted);
+    if (data.transcript) logSessionAttempt(data.transcript, data.counted, data.repetitions_counted);
 
     if (data.counted) {
       sessionCounterEl.textContent = data.remaining;
       session.lastCountedChantAt = Date.now();
       session.promptedForRechant = false;
+      session.consecutiveErrors = 0;
 
       if (data.mala_complete) {
         await finishSession();
+        return;
+      }
+    } else {
+      session.consecutiveErrors += 1;
+      if (session.consecutiveErrors >= SESSION_ERROR_STREAK_LIMIT) {
+        await handleRepeatedErrors();
         return;
       }
     }
@@ -458,9 +500,28 @@ function checkSilenceTimers() {
     pauseSession();
   } else if (elapsed >= SESSION_RECHANT_PROMPT_MS && !session.promptedForRechant) {
     session.promptedForRechant = true;
-    setSessionStatus("Vyas: please continue chanting…");
-    speakAsVyas(RECHANT_PROMPT_TEXT);
+    promptToRechant(); // fire-and-forget: sets vyasSpeaking itself, pollSession skips meanwhile
   }
+}
+
+async function promptToRechant() {
+  setSessionStatus("Vyas: please continue chanting…");
+  session.vyasSpeaking = true;
+  await speakAsVyas(RECHANT_PROMPT_TEXT);
+  if (session) {
+    session.vyasSpeaking = false;
+    if (!session.isPaused) setSessionStatus("Listening…");
+  }
+}
+
+async function handleRepeatedErrors() {
+  session.consecutiveErrors = 0;
+  setSessionStatus("Vyas is repeating the mantra for you…");
+  session.vyasSpeaking = true;
+  await speakAsVyas(document.getElementById("reference-text").value);
+  if (!session) return; // stopped while Vyas was speaking
+  session.vyasSpeaking = false;
+  pauseSession();
 }
 
 function pauseSession() {

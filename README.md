@@ -135,21 +135,46 @@ Whisper quirk, not something this app's code can fix.
 ### `POST /verify_chant`
 
 Same form fields as `/verify`. This is the single-utterance endpoint behind
-the **Live Chanting Session** UI — one short recording (a few seconds,
-ideally one repetition), judged with a three-tier decision to avoid an AI
-call on every single utterance in a long continuous session:
+the **Live Chanting Session** UI — one recording per detected utterance from
+continuous listening, which could be one repetition or several fused
+together if you're chanting quickly.
 
-1. `score >= PASS_THRESHOLD` (82.0) → counted immediately, `decision_source: "fuzzy_pass"`
-2. `score < AI_REVIEW_LOWER_BOUND` (60.0) → rejected immediately, `decision_source: "fuzzy_fail"`
-3. Otherwise (borderline) → sent to `vyas.judge_chant()`, a chat-model call with a lenient judge prompt tolerant of ASR noise/accent — `decision_source: "ai_judged"`
+Two-stage decision, revised after live testing surfaced two problems with an
+earlier single-stage version (chanting fast broke it silently; accented
+speech was rejected too often):
+
+1. **Repetition detection first** — `count_repetitions()` (the same
+   character-level matcher `/verify_batch` uses) checks whether the
+   utterance actually contains one or more back-to-back repetitions of the
+   mantra, using `REPETITION_MATCH_THRESHOLD` (68.0, more lenient than
+   `PASS_THRESHOLD`). If it finds N ≥ 1, all N are counted at once —
+   `decision_source: "matched"`, `repetitions_counted: N`. This is what
+   makes chanting speed a non-issue: however many repetitions the
+   silence-gap detector failed to split into separate utterances, this
+   still finds and counts correctly.
+2. **Only if that finds nothing** does it fall back to a single
+   whole-utterance comparison, exactly like the old logic:
+   - `score >= PASS_THRESHOLD` (82.0) → counted, `decision_source: "fuzzy_pass"`
+   - `score < AI_REVIEW_LOWER_BOUND` (35.0 — loosened from an initial 60.0
+     after real accented speech kept scoring below that) → rejected,
+     `decision_source: "fuzzy_fail"`
+   - Otherwise (borderline) → `vyas.judge_chant()`, a chat-model call with a
+     lenient judge prompt tolerant of ASR noise/accent —
+     `decision_source: "ai_judged"`
 
 An empty transcript (silence, or noise that slipped past the frontend's
 minimum-utterance-duration filter) is `decision_source: "empty_transcript"`,
 `counted: false` — treated as a normal, expected outcome in continuous
 listening, not an error, unlike `/verify`'s 422 on the same condition.
 
-Response: `{counted, decision_source, score, transcript, count, target_count, remaining, mala_complete, last_verified_at}`.
-`counted` increments the same persistent session+mantra counter as `/verify`.
+Response: `{counted, repetitions_counted, decision_source, score, transcript, count, target_count, remaining, mala_complete, last_verified_at}`.
+`repetitions_counted` (not just `counted`) is what gets added to the
+persistent session+mantra counter via `counter.increment_by()`.
+
+All four thresholds (`PASS_THRESHOLD`, `AI_REVIEW_LOWER_BOUND`,
+`REPETITION_MATCH_THRESHOLD`, and the frontend's VAD constants) are
+starting points based on limited real testing, not calibrated values —
+expect to keep tuning them.
 
 **Known limitation — no idempotency**: if the server successfully processes
 a chant (transcribe + judge + increment) but the HTTP response is lost in
@@ -256,6 +281,28 @@ chants reset them, not just any detected speech):
 - 15s since the last counted chant (`SESSION_PAUSE_MS`) → the session pauses
   entirely (stops listening) until you click **Resume** — this is
   intentionally not automatic
+
+**Consecutive-error handling**: `SESSION_ERROR_STREAK_LIMIT` (3) tracks
+not-counted attempts in a row, independent of the silence timers above — a
+chanting *fast* isn't the same as chanting *wrong*. On the 3rd consecutive
+rejection, Vyas re-speaks the mantra (via the same mechanism as "Hear the
+mantra" below) as corrective pronunciation guidance, then the session
+pauses exactly like the silence-timeout case — explicit Resume required,
+consecutive-error count reset to 0.
+
+**Vyas demonstrates the mantra**: a "🔊 Hear the mantra" button (next to the
+reference-text field) speaks the reference text via `/speak` on demand, and
+`startChantingSession()` also speaks it once automatically before listening
+begins, so you have a correct-pronunciation reference before you start.
+
+**Feedback-loop guard**: whenever Vyas is speaking during an active session
+(the initial mantra demonstration, the 10s "please continue" prompt, the
+3-error mantra re-teaching, or a manual "Hear the mantra" click),
+`session.vyasSpeaking` is set and `pollSession()` skips all VAD processing
+entirely until he's done. Without this, his own voice playing through your
+speakers could leak into the mic and get picked up as a false chant —
+`speakAsVyas()` was changed from resolving when playback *starts* to
+resolving when it *ends* specifically to make this sequencing possible.
 
 **Completion line is a placeholder** — `COMPLETION_PLACEHOLDER_TEXT` in
 `app.js` is spoken by Vyas when the counter hits zero. Swap it for the real

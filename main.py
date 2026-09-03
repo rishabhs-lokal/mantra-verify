@@ -75,7 +75,8 @@ class VerifyBatchResponse(BaseModel):
 
 class VerifyChantResponse(BaseModel):
     counted: bool
-    decision_source: str  # "fuzzy_pass" | "fuzzy_fail" | "ai_judged" | "empty_transcript"
+    repetitions_counted: int
+    decision_source: str  # "matched" | "fuzzy_pass" | "fuzzy_fail" | "ai_judged" | "empty_transcript"
     score: float
     transcript: str
     count: int
@@ -262,11 +263,20 @@ async def verify_chant(
     target_count: int = Form(108),
     language: str = Form(TRANSCRIPTION_LANGUAGE),
 ):
-    """Judge one short utterance from a continuous, VAD-segmented chanting
-    session (see static/app.js's Live Chanting Session). Fuzzy match handles
-    clear passes/fails immediately; only borderline scores
-    (matcher.AI_REVIEW_LOWER_BOUND to matcher.PASS_THRESHOLD) call the AI
-    judge, so a long session doesn't make an LLM call for every utterance.
+    """Judge one utterance from a continuous, VAD-segmented chanting session
+    (see static/app.js's Live Chanting Session).
+
+    Chanting quickly means several repetitions can get fused into a single
+    detected utterance (the client-side silence gap that would normally
+    split them never fires) — so this checks for repetitions FIRST, using
+    the same character-level sliding-window matcher as /verify_batch, which
+    naturally counts however many are actually present (1, 2, 3...)
+    regardless of pace. Only when that finds nothing does it fall back to a
+    single whole-utterance comparison, with the AI reviewing anything
+    borderline rather than rejecting outright — this two-stage approach
+    replaced an earlier version that only ever attempted the single-
+    utterance comparison, which was both too strict on accented speech and
+    silently broke on fast chanting.
 
     Empty transcripts (silence/noise that clipped past the frontend's own
     minimum-duration filter) are treated as an ordinary not-counted result,
@@ -287,22 +297,33 @@ async def verify_chant(
         else:
             raise
 
-    if not transcript:
-        counted = False
-        decision_source = "empty_transcript"
-        score = 0.0
-    else:
-        score = score_match(reference_text, transcript)
-        if score >= PASS_THRESHOLD:
-            counted, decision_source = True, "fuzzy_pass"
-        elif score < AI_REVIEW_LOWER_BOUND:
-            counted, decision_source = False, "fuzzy_fail"
-        else:
-            verdict = await vyas.judge_chant(reference_text, transcript)
-            counted, decision_source = verdict["counted"], "ai_judged"
+    repetitions_counted = 0
+    score = 0.0
+    decision_source = "empty_transcript"
 
-    if counted:
-        count, last_verified_at = counter.increment(session_id, mantra_id)
+    if transcript:
+        rep_result = count_repetitions(reference_text, transcript)
+        repetitions_counted = rep_result["repetitions"]
+
+        if repetitions_counted > 0:
+            decision_source = "matched"
+            score = sum(segment["score"] for segment in rep_result["segments"]) / repetitions_counted
+        else:
+            score = score_match(reference_text, transcript)
+            if score >= PASS_THRESHOLD:
+                repetitions_counted, decision_source = 1, "fuzzy_pass"
+            elif score < AI_REVIEW_LOWER_BOUND:
+                decision_source = "fuzzy_fail"
+            else:
+                verdict = await vyas.judge_chant(reference_text, transcript)
+                decision_source = "ai_judged"
+                if verdict["counted"]:
+                    repetitions_counted = 1
+
+    counted = repetitions_counted > 0
+
+    if repetitions_counted > 0:
+        count, last_verified_at = counter.increment_by(session_id, mantra_id, repetitions_counted)
     else:
         count, last_verified_at = counter.get_count(session_id, mantra_id)
 
@@ -319,6 +340,7 @@ async def verify_chant(
 
     return VerifyChantResponse(
         counted=counted,
+        repetitions_counted=repetitions_counted,
         decision_source=decision_source,
         score=score,
         transcript=transcript,

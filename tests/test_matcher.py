@@ -3,7 +3,9 @@ import unicodedata
 import pytest
 
 from matcher import (
+    AI_REVIEW_LOWER_BOUND,
     PASS_THRESHOLD,
+    REPETITION_MATCH_THRESHOLD,
     completion_stats,
     count_repetitions,
     normalize_text,
@@ -282,3 +284,31 @@ class TestCountRepetitions:
         spoken = "ॐनमःशिवायॐनमःशिवायॐनमःशिवाय"
         result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
         assert result["repetitions"] == 3
+
+    def test_default_threshold_is_more_lenient_than_pass_threshold(self):
+        # Real accented/ASR-mangled recitation ("ओम नमह शिवाय" for
+        # "ॐ नमः शिवाय") scores ~78 at the character level — below
+        # PASS_THRESHOLD (82), which was rejecting real attempts in live
+        # testing, but at or above REPETITION_MATCH_THRESHOLD (68), the
+        # default used here. Confirms the default is actually the lenient
+        # one, not just that the constant exists.
+        moderately_mangled = "ओम नमह शिवाय"
+        assert count_repetitions(OM_NAMAH_SHIVAYA, moderately_mangled)["repetitions"] == 1
+        assert (
+            count_repetitions(OM_NAMAH_SHIVAYA, moderately_mangled, threshold=PASS_THRESHOLD)[
+                "repetitions"
+            ]
+            == 0
+        )
+
+
+class TestThresholdOrdering:
+    def test_thresholds_are_ordered_sensibly(self):
+        # AI_REVIEW_LOWER_BOUND to PASS_THRESHOLD is the "ask the AI" zone
+        # for /verify_chant's single-utterance fallback; if these ever
+        # cross, that zone silently vanishes or inverts.
+        assert 0 < AI_REVIEW_LOWER_BOUND < PASS_THRESHOLD <= 100
+        # REPETITION_MATCH_THRESHOLD governs count_repetitions() and is
+        # deliberately more lenient than the single-utterance PASS_THRESHOLD
+        # (see matcher.py's comment on why these differ).
+        assert AI_REVIEW_LOWER_BOUND < REPETITION_MATCH_THRESHOLD < PASS_THRESHOLD

@@ -13,9 +13,21 @@ PASS_THRESHOLD = 82.0
 # AI judge entirely to save cost/latency on every single utterance. Scores
 # in [AI_REVIEW_LOWER_BOUND, PASS_THRESHOLD) are borderline enough that a
 # rigid cutoff would be too rigid either way, so those get a second opinion
-# from the chat model instead (see vyas.judge_chant). Untuned starting
-# point — adjust based on real usage.
-AI_REVIEW_LOWER_BOUND = 60.0
+# from the chat model instead (see vyas.judge_chant).
+#
+# Lowered from an initial 60.0 after live testing showed accented/heavily
+# ASR-mangled (but still good-faith) recitations scoring well below that —
+# they were being auto-rejected as "fuzzy_fail" without ever reaching the
+# AI's more lenient judgment. Still an approximation, not a measured value.
+AI_REVIEW_LOWER_BOUND = 35.0
+
+# Used by count_repetitions() when detecting repetitions inside a chant
+# session utterance (see /verify_chant): lower than PASS_THRESHOLD on
+# purpose. PASS_THRESHOLD governs a single, deliberate whole-mantra
+# comparison (/verify); this threshold governs matching short, rapid,
+# possibly-accented chunks inside a longer stream, where holding it to the
+# same strict bar rejected too many legitimate repetitions in testing.
+REPETITION_MATCH_THRESHOLD = 68.0
 
 # Devanagari punctuation that has no Latin equivalent (danda / double danda).
 _DEVANAGARI_PUNCTUATION = "।॥"
@@ -110,7 +122,7 @@ def word_diff(reference_text: str, spoken_text: str) -> list:
     return diff
 
 
-def count_repetitions(reference_text: str, spoken_text: str, threshold: float = PASS_THRESHOLD) -> dict:
+def count_repetitions(reference_text: str, spoken_text: str, threshold: float = REPETITION_MATCH_THRESHOLD) -> dict:
     """Count how many times reference_text was recited within one continuous
     spoken_text transcript — e.g. a single recording covering several japa
     repetitions back-to-back, rather than one recording per repetition.
