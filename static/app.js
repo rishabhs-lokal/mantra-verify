@@ -258,17 +258,19 @@ chatForm.addEventListener("submit", async (e) => {
 // tuning — they're a reasonable starting point, not a calibrated value.
 
 const SESSION_SPEECH_RMS_THRESHOLD = 0.02; // volume above this counts as "speaking"
-const SESSION_UTTERANCE_SILENCE_GAP_MS = 700; // silence this long marks the end of one utterance
+const SESSION_UTTERANCE_SILENCE_GAP_MS = 500; // silence this long marks the end of one utterance (lowered from 700 for faster turnaround)
 const SESSION_MIN_UTTERANCE_MS = 400; // shorter than this is treated as noise, not a real chant, and isn't sent to the server
 const SESSION_RECHANT_PROMPT_MS = 10000; // silence since the last COUNTED chant before Vyas prompts you to continue
 const SESSION_PAUSE_MS = 15000; // silence since the last COUNTED chant before the session auto-pauses
-const SESSION_POLL_INTERVAL_MS = 150;
+const SESSION_POLL_INTERVAL_MS = 75; // lowered from 150 for faster sound detection and faster barge-in reaction
 
 const SESSION_ERROR_STREAK_LIMIT = 3; // this many consecutive not-counted attempts triggers re-teaching + pause
 
-const RECHANT_PROMPT_TEXT = "I notice a pause. Please continue chanting whenever you are ready.";
+// Spoken reassurance is in Hindi throughout, regardless of the language
+// selector — these are Vyas's own reassurance lines, not mantra content.
+const RECHANT_PROMPT_TEXT = "मुझे एक विराम महसूस हो रहा है। जब आप तैयार हों, कृपया जाप जारी रखें।";
 // PLACEHOLDER — replace with the real line once you have it.
-const COMPLETION_PLACEHOLDER_TEXT = "Well done. You have completed this round of chanting. May peace be with you.";
+const COMPLETION_PLACEHOLDER_TEXT = "बहुत अच्छा। आपने जाप का यह चरण पूरा कर लिया है। शांति बनी रहे।";
 
 const targetCountInput = document.getElementById("target-count");
 const hearMantraBtn = document.getElementById("hear-mantra-btn");
@@ -319,18 +321,19 @@ async function startChantingSession() {
   const targetCount = clampTargetCount();
   const mantraId = document.getElementById("mantra-id").value;
 
-  let startingRemaining = targetCount;
+  // Always start a fresh countdown from the exact number selected — an
+  // earlier version resumed from whatever count had already persisted for
+  // this session+mantra, which looked like an unexplained drop when
+  // re-testing rather than the intended "remembers your progress" behavior.
   try {
-    const existing = await fetch(
-      `/count/${encodeURIComponent(sessionId)}?mantra_id=${encodeURIComponent(mantraId)}&target_count=${targetCount}`
+    await fetch(
+      `/count/${encodeURIComponent(sessionId)}/reset?mantra_id=${encodeURIComponent(mantraId)}`,
+      { method: "POST" }
     );
-    if (existing.ok) {
-      const data = await existing.json();
-      startingRemaining = data.remaining;
-    }
   } catch (err) {
-    // Non-fatal — fall back to a fresh countdown from targetCount.
+    // Non-fatal — worst case this session's count starts from stale progress.
   }
+  const startingRemaining = targetCount;
 
   let stream;
   try {
@@ -378,19 +381,23 @@ async function startChantingSession() {
     return;
   }
 
-  // Say the mantra once before listening starts, so the mic isn't live
-  // while Vyas is talking (speaker-to-mic leakage could otherwise register
-  // as a false chant), and so you have a correct-pronunciation reference
-  // before you begin.
+  // Start the poll loop before Vyas even starts talking, not after — while
+  // vyasSpeaking is true it only barge-in-monitors (see pollSession), but
+  // that means sound is being watched for from the very first moment, so
+  // speaking up during the initial mantra demonstration interrupts it
+  // immediately instead of only working once normal listening begins.
+  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
+
+  // Say the mantra once before full listening starts, so you have a
+  // correct-pronunciation reference before you begin.
   setSessionStatus("Vyas is demonstrating the mantra…");
   session.vyasSpeaking = true;
   await speakAsVyas(document.getElementById("reference-text").value);
-  session.vyasSpeaking = false;
 
   if (!session) return; // session may have been stopped while Vyas was speaking
 
+  session.vyasSpeaking = false;
   setSessionStatus("Listening…");
-  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
 }
 
 function getRMS() {
@@ -404,9 +411,19 @@ function getRMS() {
 }
 
 function pollSession() {
-  if (!session || session.isPaused || session.vyasSpeaking) return;
+  if (!session || session.isPaused) return;
 
   const speaking = getRMS() > SESSION_SPEECH_RMS_THRESHOLD;
+
+  // Barge-in: while Vyas is talking, don't do utterance capture — just
+  // watch for sound and cut him off the instant any is heard, so you're
+  // never stuck waiting for him to finish before you can keep chanting.
+  if (session.vyasSpeaking) {
+    if (speaking && !vyasAudio.paused) {
+      vyasAudio.pause(); // triggers speakAsVyas's onpause handler, which resolves it
+    }
+    return;
+  }
 
   if (speaking) {
     session.silenceStreakMs = 0;
@@ -446,6 +463,37 @@ function endUtteranceRecording() {
   session.currentRecorder.stop();
 }
 
+// Short synthesized tones, not speech — while chanting your eyes are likely
+// closed or unfocused, so a glance at the on-screen status/log text isn't a
+// reliable way to know whether the last chant counted. These give instant
+// audible confirmation without the latency (or interruption) of Vyas
+// actually saying something.
+function playTone(frequency, durationMs, volume) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = frequency;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(volume, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000);
+    osc.start();
+    osc.stop(ctx.currentTime + durationMs / 1000);
+    osc.onended = () => ctx.close();
+  } catch (err) {
+    // non-fatal — silently skip the tone if the Web Audio API misbehaves
+  }
+}
+
+function playCountedTone() {
+  playTone(880, 150, 0.15); // bright, short chime
+}
+
+function playNotCountedTone() {
+  playTone(220, 120, 0.08); // quieter, duller — deliberately less noticeable
+}
+
 async function submitChant(blob) {
   if (!session) return;
   setSessionStatus("Checking that chant…");
@@ -468,6 +516,7 @@ async function submitChant(blob) {
     if (data.transcript) logSessionAttempt(data.transcript, data.counted, data.repetitions_counted);
 
     if (data.counted) {
+      playCountedTone();
       sessionCounterEl.textContent = data.remaining;
       session.lastCountedChantAt = Date.now();
       session.promptedForRechant = false;
@@ -478,6 +527,7 @@ async function submitChant(blob) {
         return;
       }
     } else {
+      playNotCountedTone();
       session.consecutiveErrors += 1;
       if (session.consecutiveErrors >= SESSION_ERROR_STREAK_LIMIT) {
         await handleRepeatedErrors();

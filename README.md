@@ -272,7 +272,17 @@ calling the server (almost certainly noise, not a real chant).
 environments** — they're a reasonable starting point, not calibrated
 values. If chants aren't being detected, or background noise is triggering
 false positives, these are the first constants to adjust (top of the "Live
-Chanting Session" section in `app.js`).
+Chanting Session" section in `app.js`). `SESSION_UTTERANCE_SILENCE_GAP_MS`
+(500) and `SESSION_POLL_INTERVAL_MS` (75) were both lowered from their
+initial values (700/150) for faster reaction — feedback said the original
+timing felt sluggish.
+
+**Non-visual feedback**: `playCountedTone()`/`playNotCountedTone()` play a
+short synthesized chime (Web Audio API `OscillatorNode`, no TTS round-trip)
+on every chant result — bright/short for counted, quiet/dull for not
+counted. Added because you're not going to be reading the on-screen log
+while chanting with your eyes closed; the tones give the same information
+without requiring that.
 
 **Silence timers** (per-decision from earlier discussion — only *counted*
 chants reset them, not just any detected speech):
@@ -295,18 +305,34 @@ reference-text field) speaks the reference text via `/speak` on demand, and
 `startChantingSession()` also speaks it once automatically before listening
 begins, so you have a correct-pronunciation reference before you start.
 
-**Feedback-loop guard**: whenever Vyas is speaking during an active session
-(the initial mantra demonstration, the 10s "please continue" prompt, the
-3-error mantra re-teaching, or a manual "Hear the mantra" click),
-`session.vyasSpeaking` is set and `pollSession()` skips all VAD processing
-entirely until he's done. Without this, his own voice playing through your
-speakers could leak into the mic and get picked up as a false chant —
-`speakAsVyas()` was changed from resolving when playback *starts* to
-resolving when it *ends* specifically to make this sequencing possible.
+**Barge-in**: while Vyas is speaking during an active session (the initial
+mantra demonstration, the 10s "please continue" prompt, the 3-error mantra
+re-teaching, or a manual "Hear the mantra" click), `session.vyasSpeaking` is
+set — but `pollSession()` doesn't fully stop, it switches to a lightweight
+mode that only watches for sound and immediately calls `vyasAudio.pause()`
+the instant any is detected, cutting him off rather than making you wait
+for him to finish. This is also what prevents his own voice from leaking
+through your speakers into the mic and registering as a false chant (the
+same guard serves both purposes) — `speakAsVyas()` was changed from
+resolving when playback *starts* to resolving when it *ends* specifically
+to make this sequencing work, since callers need to know when he's
+actually done (or interrupted) talking, not just when he started.
+
+**Reassurance is spoken in Hindi**: `RECHANT_PROMPT_TEXT` and
+`COMPLETION_PLACEHOLDER_TEXT` are Hindi regardless of the language
+selector — these are Vyas's own reassurance, not mantra content, so they
+don't follow the same language choice as transcription/chat.
 
 **Completion line is a placeholder** — `COMPLETION_PLACEHOLDER_TEXT` in
 `app.js` is spoken by Vyas when the counter hits zero. Swap it for the real
 line whenever you have it; it's a single string constant, clearly marked.
+
+**Counter always starts fresh**: `startChantingSession()` calls
+`POST /count/{session_id}/reset` before beginning, so every session starts
+its countdown at exactly the number you set. An earlier version resumed
+from whatever count had already persisted for that session+mantra (meant
+to preserve progress across page reloads), but during testing that read as
+an unexplained drop rather than the intended behavior — simplicity won.
 
 **Known limitation — no request idempotency**: see `/verify_chant`'s README
 section above. In rare cases of connection flakiness, a chant could
