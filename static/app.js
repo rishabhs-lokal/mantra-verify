@@ -231,3 +231,280 @@ chatForm.addEventListener("submit", async (e) => {
     setVyasStatus("Vyas is listening.");
   }
 });
+
+// ---- Live Chanting Session ----
+//
+// Continuous mic listening with client-side voice activity detection (VAD):
+// no streaming transcription exists (OpenRouter's Whisper endpoint is
+// one-shot request/response), so this segments speech into individual
+// utterances itself by watching microphone volume, and sends each one to
+// /verify_chant as it ends. It reuses the same reference-text / mantra-id /
+// target-count / language fields as the manual Recite flow above, and the
+// same persistent session+mantra counter (via /verify_chant, which calls
+// counter.increment exactly like /verify does) — this is a continuous-
+// listening front end for the same counting backend, not a separate one.
+//
+// The RMS speech threshold and silence-gap timing below are untested
+// against real microphone hardware/environments and will likely need
+// tuning — they're a reasonable starting point, not a calibrated value.
+
+const SESSION_SPEECH_RMS_THRESHOLD = 0.02; // volume above this counts as "speaking"
+const SESSION_UTTERANCE_SILENCE_GAP_MS = 700; // silence this long marks the end of one utterance
+const SESSION_MIN_UTTERANCE_MS = 400; // shorter than this is treated as noise, not a real chant, and isn't sent to the server
+const SESSION_RECHANT_PROMPT_MS = 10000; // silence since the last COUNTED chant before Vyas prompts you to continue
+const SESSION_PAUSE_MS = 15000; // silence since the last COUNTED chant before the session auto-pauses
+const SESSION_POLL_INTERVAL_MS = 150;
+
+const RECHANT_PROMPT_TEXT = "I notice a pause. Please continue chanting whenever you are ready.";
+// PLACEHOLDER — replace with the real line once you have it.
+const COMPLETION_PLACEHOLDER_TEXT = "Well done. You have completed this round of chanting. May peace be with you.";
+
+const targetCountInput = document.getElementById("target-count");
+const sessionStartBtn = document.getElementById("session-start-btn");
+const sessionStopBtn = document.getElementById("session-stop-btn");
+const sessionResumeBtn = document.getElementById("session-resume-btn");
+const sessionCounterWrap = document.getElementById("session-counter-wrap");
+const sessionCounterEl = document.getElementById("session-counter");
+const sessionStatus = document.getElementById("session-status");
+const sessionError = document.getElementById("session-error");
+const sessionLog = document.getElementById("session-log");
+
+function clampTargetCount() {
+  let value = parseInt(targetCountInput.value, 10);
+  if (isNaN(value)) value = 108;
+  value = Math.max(1, Math.min(108, value));
+  targetCountInput.value = value;
+  return value;
+}
+
+targetCountInput.addEventListener("change", clampTargetCount);
+
+let session = null;
+
+function setSessionStatus(text) {
+  sessionStatus.textContent = text;
+}
+
+function logSessionAttempt(text, counted) {
+  const div = document.createElement("div");
+  div.className = `session-log-entry ${counted ? "counted" : "rejected"}`;
+  div.textContent = `${counted ? "✓" : "✗"} "${text}"`;
+  sessionLog.prepend(div);
+}
+
+async function startChantingSession() {
+  sessionError.hidden = true;
+  const targetCount = clampTargetCount();
+  const mantraId = document.getElementById("mantra-id").value;
+
+  let startingRemaining = targetCount;
+  try {
+    const existing = await fetch(
+      `/count/${encodeURIComponent(sessionId)}?mantra_id=${encodeURIComponent(mantraId)}&target_count=${targetCount}`
+    );
+    if (existing.ok) {
+      const data = await existing.json();
+      startingRemaining = data.remaining;
+    }
+  } catch (err) {
+    // Non-fatal — fall back to a fresh countdown from targetCount.
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    sessionError.textContent = `Could not access microphone: ${err.message}`;
+    sessionError.hidden = false;
+    return;
+  }
+
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioContext.createMediaStreamSource(stream);
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+
+  session = {
+    stream,
+    audioContext,
+    analyser,
+    dataArray: new Uint8Array(analyser.fftSize),
+    targetCount,
+    isSpeaking: false,
+    silenceStreakMs: 0,
+    utteranceStartedAt: 0,
+    currentRecorder: null,
+    currentChunks: [],
+    lastCountedChantAt: Date.now(),
+    promptedForRechant: false,
+    isPaused: false,
+    pollTimer: null,
+  };
+
+  sessionCounterWrap.hidden = false;
+  sessionCounterEl.textContent = startingRemaining;
+  sessionStartBtn.hidden = true;
+  sessionStopBtn.hidden = false;
+  sessionResumeBtn.hidden = true;
+  sessionLog.innerHTML = "";
+
+  if (startingRemaining <= 0) {
+    await finishSession();
+    return;
+  }
+
+  setSessionStatus("Listening…");
+  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
+}
+
+function getRMS() {
+  session.analyser.getByteTimeDomainData(session.dataArray);
+  let sumSquares = 0;
+  for (let i = 0; i < session.dataArray.length; i++) {
+    const normalized = (session.dataArray[i] - 128) / 128;
+    sumSquares += normalized * normalized;
+  }
+  return Math.sqrt(sumSquares / session.dataArray.length);
+}
+
+function pollSession() {
+  if (!session || session.isPaused) return;
+
+  const speaking = getRMS() > SESSION_SPEECH_RMS_THRESHOLD;
+
+  if (speaking) {
+    session.silenceStreakMs = 0;
+    if (!session.isSpeaking) {
+      session.isSpeaking = true;
+      beginUtteranceRecording();
+    }
+  } else if (session.isSpeaking) {
+    session.silenceStreakMs += SESSION_POLL_INTERVAL_MS;
+    if (session.silenceStreakMs >= SESSION_UTTERANCE_SILENCE_GAP_MS) {
+      session.isSpeaking = false;
+      endUtteranceRecording();
+    }
+  }
+
+  checkSilenceTimers();
+}
+
+function beginUtteranceRecording() {
+  session.utteranceStartedAt = Date.now();
+  session.currentChunks = [];
+  session.currentRecorder = new MediaRecorder(session.stream);
+  session.currentRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) session.currentChunks.push(e.data);
+  };
+  session.currentRecorder.start();
+}
+
+function endUtteranceRecording() {
+  if (!session.currentRecorder || session.currentRecorder.state !== "recording") return;
+  const duration = Date.now() - session.utteranceStartedAt;
+  const chunks = session.currentChunks;
+  session.currentRecorder.onstop = () => {
+    if (duration < SESSION_MIN_UTTERANCE_MS) return; // too short to plausibly be a real chant
+    submitChant(new Blob(chunks, { type: "audio/webm" }));
+  };
+  session.currentRecorder.stop();
+}
+
+async function submitChant(blob) {
+  if (!session) return;
+  setSessionStatus("Checking that chant…");
+
+  const formData = new FormData();
+  formData.append("audio", blob, "chant.webm");
+  formData.append("reference_text", document.getElementById("reference-text").value);
+  formData.append("session_id", sessionId);
+  formData.append("mantra_id", document.getElementById("mantra-id").value);
+  formData.append("target_count", session.targetCount);
+  formData.append("language", languageSelect.value);
+
+  try {
+    const response = await fetch("/verify_chant", { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || `Chant check failed (${response.status})`);
+    }
+
+    if (data.transcript) logSessionAttempt(data.transcript, data.counted);
+
+    if (data.counted) {
+      sessionCounterEl.textContent = data.remaining;
+      session.lastCountedChantAt = Date.now();
+      session.promptedForRechant = false;
+
+      if (data.mala_complete) {
+        await finishSession();
+        return;
+      }
+    }
+
+    if (session && !session.isPaused) setSessionStatus("Listening…");
+  } catch (err) {
+    sessionError.textContent = err.message;
+    sessionError.hidden = false;
+  }
+}
+
+function checkSilenceTimers() {
+  if (!session || session.isPaused) return;
+  const elapsed = Date.now() - session.lastCountedChantAt;
+
+  if (elapsed >= SESSION_PAUSE_MS) {
+    pauseSession();
+  } else if (elapsed >= SESSION_RECHANT_PROMPT_MS && !session.promptedForRechant) {
+    session.promptedForRechant = true;
+    setSessionStatus("Vyas: please continue chanting…");
+    speakAsVyas(RECHANT_PROMPT_TEXT);
+  }
+}
+
+function pauseSession() {
+  if (!session || session.isPaused) return;
+  session.isPaused = true;
+  clearInterval(session.pollTimer);
+  if (session.isSpeaking) endUtteranceRecording();
+  sessionResumeBtn.hidden = false;
+  setSessionStatus("Paused — click Resume to continue.");
+}
+
+function resumeSession() {
+  if (!session) return;
+  session.isPaused = false;
+  session.lastCountedChantAt = Date.now();
+  session.promptedForRechant = false;
+  sessionResumeBtn.hidden = true;
+  setSessionStatus("Listening…");
+  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
+}
+
+async function finishSession() {
+  setSessionStatus("Complete! 🕉");
+  stopChantingSession(false);
+  await speakAsVyas(COMPLETION_PLACEHOLDER_TEXT);
+}
+
+function stopChantingSession(userInitiated = true) {
+  if (!session) return;
+  clearInterval(session.pollTimer);
+  if (session.currentRecorder && session.currentRecorder.state === "recording") {
+    session.currentRecorder.stop();
+  }
+  session.stream.getTracks().forEach((track) => track.stop());
+  session.audioContext.close();
+
+  sessionStartBtn.hidden = false;
+  sessionStopBtn.hidden = true;
+  sessionResumeBtn.hidden = true;
+  if (userInitiated) setSessionStatus("Session stopped.");
+
+  session = null;
+}
+
+sessionStartBtn.addEventListener("click", startChantingSession);
+sessionStopBtn.addEventListener("click", () => stopChantingSession(true));
+sessionResumeBtn.addEventListener("click", resumeSession);

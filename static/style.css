@@ -174,6 +174,73 @@ select, textarea, input[type="text"], input[type="number"] {
 
 .btn-primary.recording { background: var(--missing); }
 
+.btn-secondary {
+  background: #fff;
+  color: var(--maroon);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover { background: var(--bg); }
+
+.panel-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+.panel h3 {
+  color: var(--maroon);
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.session-help {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 1rem;
+  line-height: 1.4;
+}
+
+.session-counter-wrap {
+  text-align: center;
+  margin: 1.5rem 0;
+}
+
+.session-counter {
+  font-size: 4rem;
+  font-weight: 800;
+  color: var(--saffron-dark);
+  line-height: 1;
+}
+
+.session-counter-label {
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+}
+
+.session-status {
+  text-align: center;
+  font-style: italic;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.session-log {
+  margin-top: 0.75rem;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+}
+
+.session-log-entry {
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 0.25rem;
+}
+
+.session-log-entry.counted { background: #eaf5ec; color: var(--match); }
+.session-log-entry.rejected { background: #fdecea; color: var(--missing); }
+
 .record-row {
   display: flex;
   align-items: center;

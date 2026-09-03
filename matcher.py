@@ -8,6 +8,15 @@ from rapidfuzz import fuzz
 
 PASS_THRESHOLD = 82.0
 
+# Used by the continuous live-chanting flow (/verify_chant): scores below
+# this are confidently wrong (silence, noise, unrelated speech) and skip the
+# AI judge entirely to save cost/latency on every single utterance. Scores
+# in [AI_REVIEW_LOWER_BOUND, PASS_THRESHOLD) are borderline enough that a
+# rigid cutoff would be too rigid either way, so those get a second opinion
+# from the chat model instead (see vyas.judge_chant). Untuned starting
+# point — adjust based on real usage.
+AI_REVIEW_LOWER_BOUND = 60.0
+
 # Devanagari punctuation that has no Latin equivalent (danda / double danda).
 _DEVANAGARI_PUNCTUATION = "।॥"
 

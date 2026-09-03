@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Vyas — Mantra Sadhana Companion</title>
-<link rel="stylesheet" href="/style.css?v=4" />
+<link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
 <header class="app-header">
@@ -54,8 +54,8 @@
         <label>Mantra ID
           <input id="mantra-id" type="text" value="om-namah-shivaya" />
         </label>
-        <label>Target count
-          <input id="target-count" type="number" value="108" min="1" />
+        <label>Target count (1–108)
+          <input id="target-count" type="number" value="108" min="1" max="108" />
         </label>
       </div>
 
@@ -120,6 +120,32 @@
         <p class="transcript-label">Detected segments:</p>
         <p id="batch-segments" class="word-diff"></p>
       </div>
+
+      <hr class="panel-divider" />
+
+      <h3>Live Chanting Session</h3>
+      <p class="session-help">
+        Start a session and chant continuously into the mic — each recognized
+        chant lowers the counter below by one, automatically, using the
+        mantra and target count set above. Pause for 10 seconds and Vyas will
+        prompt you to continue; pause for 15 seconds total and the session
+        pauses until you click Resume.
+      </p>
+
+      <div class="record-row">
+        <button id="session-start-btn" class="btn btn-primary">Start Chanting Session</button>
+        <button id="session-stop-btn" class="btn btn-secondary" hidden>Stop Session</button>
+        <button id="session-resume-btn" class="btn btn-primary" hidden>Resume</button>
+      </div>
+
+      <div id="session-counter-wrap" class="session-counter-wrap" hidden>
+        <div class="session-counter" id="session-counter">–</div>
+        <p class="session-counter-label">chants remaining</p>
+      </div>
+
+      <p id="session-status" class="session-status"></p>
+      <div id="session-error" class="error" hidden></div>
+      <div id="session-log" class="session-log"></div>
     </section>
 
     <section class="panel chat-panel">
@@ -137,6 +163,6 @@
 
 <audio id="vyas-audio" hidden></audio>
 
-<script src="/app.js?v=2"></script>
+<script src="/app.js?v=3"></script>
 </body>
 </html>

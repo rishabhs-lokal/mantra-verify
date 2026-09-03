@@ -106,6 +106,61 @@ A verification only increments `count` when `score >= 82.0`
 - `504` — transcription request timed out
 - `500` — `OPENROUTER_API_KEY` not configured on the server
 
+### `POST /verify_batch`
+
+Same form fields as `/verify`. Use this when one recording covers several
+repetitions of the mantra back-to-back (e.g. "say it 11 times, then stop"),
+instead of one recording per repetition.
+
+`matcher.count_repetitions()` finds how many times the mantra appears in the
+transcript using a **character-level** sliding window (not word-level) —
+live testing found Whisper fuses words together with no spaces at all on
+rapid, monotonous repeated speech (`"ओम्नमहशिवाय"` instead of
+`"ओम् नमः शिवाय"`), which breaks a word-count window completely. All
+detected repetitions are added to the counter in one call via
+`counter.increment_by()`.
+
+Response adds `detected_repetitions` and `segments` (each with `text` and
+`score`) in place of `/verify`'s `score`/`passed`/`word_diff`/etc. — same
+`count`/`target_count`/`remaining`/`mala_complete`/`transcript`/
+`reference_normalized`/`last_verified_at` fields otherwise.
+
+**Known limitation**: perfectly uniform, pause-free audio (e.g. robotic
+TTS) can trigger Whisper's repetition-collapse behavior and truncate well
+before the actual end of a long repeated clip — confirmed with an
+11-repetition synthetic test that only transcribed ~4. Natural human
+pauses/variation between repetitions should avoid this, but it's a real
+Whisper quirk, not something this app's code can fix.
+
+### `POST /verify_chant`
+
+Same form fields as `/verify`. This is the single-utterance endpoint behind
+the **Live Chanting Session** UI — one short recording (a few seconds,
+ideally one repetition), judged with a three-tier decision to avoid an AI
+call on every single utterance in a long continuous session:
+
+1. `score >= PASS_THRESHOLD` (82.0) → counted immediately, `decision_source: "fuzzy_pass"`
+2. `score < AI_REVIEW_LOWER_BOUND` (60.0) → rejected immediately, `decision_source: "fuzzy_fail"`
+3. Otherwise (borderline) → sent to `vyas.judge_chant()`, a chat-model call with a lenient judge prompt tolerant of ASR noise/accent — `decision_source: "ai_judged"`
+
+An empty transcript (silence, or noise that slipped past the frontend's
+minimum-utterance-duration filter) is `decision_source: "empty_transcript"`,
+`counted: false` — treated as a normal, expected outcome in continuous
+listening, not an error, unlike `/verify`'s 422 on the same condition.
+
+Response: `{counted, decision_source, score, transcript, count, target_count, remaining, mala_complete, last_verified_at}`.
+`counted` increments the same persistent session+mantra counter as `/verify`.
+
+**Known limitation — no idempotency**: if the server successfully processes
+a chant (transcribe + judge + increment) but the HTTP response is lost in
+transit (a real occurrence seen during testing — a flaky connection dropped
+the response after the server had already incremented the counter), the
+client has no way to know the call actually succeeded. A naive retry would
+double-count. The frontend does not currently retry failed `/verify_chant`
+calls automatically, which avoids the common case, but there's no
+request-level deduplication (e.g. an idempotency key) if a retry does
+happen some other way.
+
 ### `GET /count/{session_id}?mantra_id=...&target_count=108`
 
 Returns the current count, remaining, and mala-complete status for one
@@ -169,6 +224,47 @@ This overwrites `static/vyas-portrait.png` — edit the `PROMPT` or
 An earlier hand-built SVG placeholder lived directly in `index.html` before
 this; it's gone now that a real portrait exists, but the git history has it
 if you ever want to compare.
+
+## Live Chanting Session
+
+The "Live Chanting Session" block in the Recite panel (`static/app.js`,
+bottom section) is a continuous-listening mode: start it once, then chant
+into the mic — each recognized chant automatically counts down a visible
+counter, no manual start/stop per repetition.
+
+There is no streaming transcription (OpenRouter's Whisper endpoint is
+one-shot request/response), so this segments your speech into individual
+utterances itself, client-side, using simple volume-based voice activity
+detection (VAD) — not a proper VAD library, just an RMS-over-threshold check
+via the Web Audio API (`AnalyserNode`). When volume crosses
+`SESSION_SPEECH_RMS_THRESHOLD` it starts recording; after
+`SESSION_UTTERANCE_SILENCE_GAP_MS` of continuous silence it stops, finalizes
+that utterance's clip, and sends it to `/verify_chant`. Utterances shorter
+than `SESSION_MIN_UTTERANCE_MS` are discarded client-side without even
+calling the server (almost certainly noise, not a real chant).
+
+**These thresholds are untested against real microphone hardware or
+environments** — they're a reasonable starting point, not calibrated
+values. If chants aren't being detected, or background noise is triggering
+false positives, these are the first constants to adjust (top of the "Live
+Chanting Session" section in `app.js`).
+
+**Silence timers** (per-decision from earlier discussion — only *counted*
+chants reset them, not just any detected speech):
+- 10s since the last counted chant (`SESSION_RECHANT_PROMPT_MS`) → Vyas
+  speaks a prompt (`RECHANT_PROMPT_TEXT`) asking you to continue
+- 15s since the last counted chant (`SESSION_PAUSE_MS`) → the session pauses
+  entirely (stops listening) until you click **Resume** — this is
+  intentionally not automatic
+
+**Completion line is a placeholder** — `COMPLETION_PLACEHOLDER_TEXT` in
+`app.js` is spoken by Vyas when the counter hits zero. Swap it for the real
+line whenever you have it; it's a single string constant, clearly marked.
+
+**Known limitation — no request idempotency**: see `/verify_chant`'s README
+section above. In rare cases of connection flakiness, a chant could
+theoretically be counted twice if the server succeeds but the response is
+lost and something retries.
 
 ## Notes on transcription language
 
