@@ -58,6 +58,10 @@ body {
   text-align: center;
 }
 
+@media (max-width: 800px) {
+  .vyas-panel { position: static; }
+}
+
 .vyas-figure {
   border-radius: 16px;
   overflow: hidden;
