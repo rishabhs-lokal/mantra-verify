@@ -139,6 +139,26 @@ the **Live Chanting Session** UI — one recording per detected utterance from
 continuous listening, which could be one repetition or several fused
 together if you're chanting quickly.
 
+Transcribes with `LIVE_TRANSCRIPTION_MODEL`
+(`openai/whisper-large-v3-turbo`) rather than the standard
+`TRANSCRIPTION_MODEL` used by `/verify`/`/verify_batch`, in response to
+feedback that verification felt slow.
+
+**Measured honestly, not assumed**: 3 timed runs of each model on the same
+clip put turbo at ~2.7s average vs. standard at ~3.5s — a real but modest
+~20% gain, with high variance (one turbo run took 4.2s, another 1.1s), and
+turbo's transcription was measurably less accurate ("नमह"/"शिवाए" vs. the
+standard model's "नमः"/"शिवाई" on identical audio). A less accurate
+transcription can also land in the AI-review gray zone more often, adding
+an extra chat-model call that eats into or reverses the time saved — this
+happened during testing. Net: still worth keeping since it's rarely worse
+and this endpoint's matching already tolerates the accuracy hit, but **it
+does not make verification fast** — 2-4 seconds appears to be roughly the
+floor for a cloud Whisper round-trip regardless of model choice. If
+sub-second response time is actually required, the real fix is running
+Whisper locally instead of round-tripping to OpenRouter per utterance —
+a bigger change (accuracy tradeoff, more setup) not implemented here.
+
 Two-stage decision, revised after live testing surfaced two problems with an
 earlier single-stage version (chanting fast broke it silently; accented
 speech was rejected too often):
@@ -284,13 +304,13 @@ counted. Added because you're not going to be reading the on-screen log
 while chanting with your eyes closed; the tones give the same information
 without requiring that.
 
-**Silence timers** (per-decision from earlier discussion — only *counted*
-chants reset them, not just any detected speech):
-- 10s since the last counted chant (`SESSION_RECHANT_PROMPT_MS`) → Vyas
-  speaks a prompt (`RECHANT_PROMPT_TEXT`) asking you to continue
-- 15s since the last counted chant (`SESSION_PAUSE_MS`) → the session pauses
-  entirely (stops listening) until you click **Resume** — this is
-  intentionally not automatic
+**Silence timer** — only *counted* chants reset it, not just any detected
+speech: 10s since the last counted chant (`SESSION_PAUSE_MS`) and the
+session pauses entirely (stops listening) until you click **Resume**. An
+earlier version had a spoken "please continue" prompt at 10s and paused at
+15s; the spoken prompt was cut (silent pause + visible Resume button is
+enough), so this is just the one remaining threshold, at the point where
+the prompt used to fire.
 
 **Consecutive-error handling**: `SESSION_ERROR_STREAK_LIMIT` (3) tracks
 not-counted attempts in a row, independent of the silence timers above — a
@@ -306,22 +326,22 @@ reference-text field) speaks the reference text via `/speak` on demand, and
 begins, so you have a correct-pronunciation reference before you start.
 
 **Barge-in**: while Vyas is speaking during an active session (the initial
-mantra demonstration, the 10s "please continue" prompt, the 3-error mantra
-re-teaching, or a manual "Hear the mantra" click), `session.vyasSpeaking` is
-set — but `pollSession()` doesn't fully stop, it switches to a lightweight
-mode that only watches for sound and immediately calls `vyasAudio.pause()`
-the instant any is detected, cutting him off rather than making you wait
-for him to finish. This is also what prevents his own voice from leaking
-through your speakers into the mic and registering as a false chant (the
-same guard serves both purposes) — `speakAsVyas()` was changed from
-resolving when playback *starts* to resolving when it *ends* specifically
-to make this sequencing work, since callers need to know when he's
-actually done (or interrupted) talking, not just when he started.
+mantra demonstration, the 3-error mantra re-teaching, or a manual "Hear the
+mantra" click), `session.vyasSpeaking` is set — but `pollSession()` doesn't
+fully stop, it switches to a lightweight mode that only watches for sound
+and immediately calls `vyasAudio.pause()` the instant any is detected,
+cutting him off rather than making you wait for him to finish. This is also
+what prevents his own voice from leaking through your speakers into the mic
+and registering as a false chant (the same guard serves both purposes) —
+`speakAsVyas()` was changed from resolving when playback *starts* to
+resolving when it *ends* specifically to make this sequencing work, since
+callers need to know when he's actually done (or interrupted) talking, not
+just when he started.
 
-**Reassurance is spoken in Hindi**: `RECHANT_PROMPT_TEXT` and
-`COMPLETION_PLACEHOLDER_TEXT` are Hindi regardless of the language
-selector — these are Vyas's own reassurance, not mantra content, so they
-don't follow the same language choice as transcription/chat.
+**Reassurance is spoken in Hindi**: `COMPLETION_PLACEHOLDER_TEXT` is Hindi
+regardless of the language selector — it's Vyas's own reassurance, not
+mantra content, so it doesn't follow the same language choice as
+transcription/chat.
 
 **Completion line is a placeholder** — `COMPLETION_PLACEHOLDER_TEXT` in
 `app.js` is spoken by Vyas when the counter hits zero. Swap it for the real

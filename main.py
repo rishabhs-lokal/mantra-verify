@@ -37,6 +37,16 @@ app = FastAPI(title="Mantra Verify")
 OPENROUTER_TRANSCRIPTION_URL = "https://openrouter.ai/api/v1/audio/transcriptions"
 TRANSCRIPTION_MODEL = "openai/whisper-large-v3"
 
+# Used only by /verify_chant (the live chanting session), where latency
+# directly hurts the real-time UX — turbo trades some multilingual accuracy
+# for significantly faster processing. Acceptable there specifically since
+# utterances are short, simple mantra phrases and /verify_chant's matching
+# is already tolerant of ASR noise (matcher.REPETITION_MATCH_THRESHOLD /
+# AI_REVIEW_LOWER_BOUND are both lower than the standard PASS_THRESHOLD).
+# /verify and /verify_batch are one-off, not in a tight loop, so they keep
+# the standard model where correctness matters more than speed.
+LIVE_TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
+
 # Whisper has a dedicated Sanskrit code ("sa"), but it's a low-resource
 # language for Whisper's training data — Hindi ("hi") is the default here
 # since it's better-supported and phonetically close to Devanagari mantra
@@ -112,7 +122,11 @@ class SpeakRequest(BaseModel):
 
 
 async def transcribe_audio(
-    audio_bytes: bytes, filename: str, content_type: str, language: str
+    audio_bytes: bytes,
+    filename: str,
+    content_type: str,
+    language: str,
+    model: str = TRANSCRIPTION_MODEL,
 ) -> str:
     """Send audio to OpenRouter for transcription and return the transcript text.
 
@@ -122,7 +136,7 @@ async def transcribe_audio(
     api_key = require_api_key()
 
     files = {"file": (filename, audio_bytes, content_type or "application/octet-stream")}
-    data = {"model": TRANSCRIPTION_MODEL, "language": language}
+    data = {"model": model, "language": language}
 
     response = await openrouter_post(OPENROUTER_TRANSCRIPTION_URL, api_key, data=data, files=files)
 
@@ -289,7 +303,11 @@ async def verify_chant(
 
     try:
         transcript = await transcribe_audio(
-            audio_bytes, audio.filename or "audio.wav", audio.content_type, language
+            audio_bytes,
+            audio.filename or "audio.wav",
+            audio.content_type,
+            language,
+            model=LIVE_TRANSCRIPTION_MODEL,
         )
     except HTTPException as exc:
         if exc.status_code == 422:

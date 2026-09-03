@@ -260,15 +260,17 @@ chatForm.addEventListener("submit", async (e) => {
 const SESSION_SPEECH_RMS_THRESHOLD = 0.02; // volume above this counts as "speaking"
 const SESSION_UTTERANCE_SILENCE_GAP_MS = 500; // silence this long marks the end of one utterance (lowered from 700 for faster turnaround)
 const SESSION_MIN_UTTERANCE_MS = 400; // shorter than this is treated as noise, not a real chant, and isn't sent to the server
-const SESSION_RECHANT_PROMPT_MS = 10000; // silence since the last COUNTED chant before Vyas prompts you to continue
-const SESSION_PAUSE_MS = 15000; // silence since the last COUNTED chant before the session auto-pauses
+// Silence since the last COUNTED chant before the session pauses and shows
+// the Resume button — no spoken prompt first anymore (an earlier version
+// prompted at 10s and paused at 15s; the spoken prompt was cut, so this is
+// just the single remaining threshold).
+const SESSION_PAUSE_MS = 10000;
 const SESSION_POLL_INTERVAL_MS = 75; // lowered from 150 for faster sound detection and faster barge-in reaction
 
 const SESSION_ERROR_STREAK_LIMIT = 3; // this many consecutive not-counted attempts triggers re-teaching + pause
 
 // Spoken reassurance is in Hindi throughout, regardless of the language
-// selector — these are Vyas's own reassurance lines, not mantra content.
-const RECHANT_PROMPT_TEXT = "मुझे एक विराम महसूस हो रहा है। जब आप तैयार हों, कृपया जाप जारी रखें।";
+// selector — this is Vyas's own reassurance line, not mantra content.
 // PLACEHOLDER — replace with the real line once you have it.
 const COMPLETION_PLACEHOLDER_TEXT = "बहुत अच्छा। आपने जाप का यह चरण पूरा कर लिया है। शांति बनी रहे।";
 
@@ -362,7 +364,6 @@ async function startChantingSession() {
     currentRecorder: null,
     currentChunks: [],
     lastCountedChantAt: Date.now(),
-    promptedForRechant: false,
     consecutiveErrors: 0,
     vyasSpeaking: false,
     isPaused: false,
@@ -519,7 +520,6 @@ async function submitChant(blob) {
       playCountedTone();
       sessionCounterEl.textContent = data.remaining;
       session.lastCountedChantAt = Date.now();
-      session.promptedForRechant = false;
       session.consecutiveErrors = 0;
 
       if (data.mala_complete) {
@@ -548,19 +548,6 @@ function checkSilenceTimers() {
 
   if (elapsed >= SESSION_PAUSE_MS) {
     pauseSession();
-  } else if (elapsed >= SESSION_RECHANT_PROMPT_MS && !session.promptedForRechant) {
-    session.promptedForRechant = true;
-    promptToRechant(); // fire-and-forget: sets vyasSpeaking itself, pollSession skips meanwhile
-  }
-}
-
-async function promptToRechant() {
-  setSessionStatus("Vyas: please continue chanting…");
-  session.vyasSpeaking = true;
-  await speakAsVyas(RECHANT_PROMPT_TEXT);
-  if (session) {
-    session.vyasSpeaking = false;
-    if (!session.isPaused) setSessionStatus("Listening…");
   }
 }
 
@@ -587,7 +574,6 @@ function resumeSession() {
   if (!session) return;
   session.isPaused = false;
   session.lastCountedChantAt = Date.now();
-  session.promptedForRechant = false;
   sessionResumeBtn.hidden = true;
   setSessionStatus("Listening…");
   session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
