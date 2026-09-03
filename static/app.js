@@ -9,6 +9,8 @@ const recordBtn = document.getElementById("record-btn");
 const recordIndicator = document.getElementById("record-indicator");
 const verifyError = document.getElementById("verify-error");
 const verifyResult = document.getElementById("verify-result");
+const batchResult = document.getElementById("batch-result");
+const batchModeCheckbox = document.getElementById("batch-mode");
 
 const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
@@ -106,7 +108,8 @@ async function startRecording() {
 
 async function submitVerification(audioBlob) {
   verifyError.hidden = true;
-  setVyasStatus("Vyas is checking your recitation…");
+  const isBatch = batchModeCheckbox.checked;
+  setVyasStatus(isBatch ? "Vyas is counting your repetitions…" : "Vyas is checking your recitation…");
 
   const formData = new FormData();
   formData.append("audio", audioBlob, "recording.webm");
@@ -116,13 +119,19 @@ async function submitVerification(audioBlob) {
   formData.append("target_count", document.getElementById("target-count").value);
   formData.append("language", languageSelect.value);
 
+  const endpoint = isBatch ? "/verify_batch" : "/verify";
+
   try {
-    const response = await fetch("/verify", { method: "POST", body: formData });
+    const response = await fetch(endpoint, { method: "POST", body: formData });
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || `Verification failed (${response.status})`);
     }
-    renderVerifyResult(data);
+    if (isBatch) {
+      renderBatchResult(data);
+    } else {
+      renderVerifyResult(data);
+    }
     setVyasStatus("Vyas is listening.");
   } catch (err) {
     verifyError.textContent = err.message;
@@ -132,6 +141,7 @@ async function submitVerification(audioBlob) {
 }
 
 function renderVerifyResult(data) {
+  batchResult.hidden = true;
   verifyResult.hidden = false;
 
   document.getElementById("result-score").textContent = data.score.toFixed(0);
@@ -154,6 +164,30 @@ function renderVerifyResult(data) {
     span.textContent = word;
     diffContainer.appendChild(span);
   });
+}
+
+function renderBatchResult(data) {
+  verifyResult.hidden = true;
+  batchResult.hidden = false;
+
+  document.getElementById("batch-detected").textContent = data.detected_repetitions;
+  document.getElementById("batch-count").textContent = data.count;
+  document.getElementById("batch-target").textContent = data.target_count;
+  document.getElementById("batch-mala-complete").hidden = !data.mala_complete;
+  document.getElementById("batch-transcript").textContent = data.transcript;
+
+  const segmentsContainer = document.getElementById("batch-segments");
+  segmentsContainer.innerHTML = "";
+  if (data.segments.length === 0) {
+    segmentsContainer.textContent = "No repetitions detected — try recording again with clearer pauses between each one.";
+  } else {
+    data.segments.forEach((segment, i) => {
+      const span = document.createElement("span");
+      span.className = "match";
+      span.textContent = `#${i + 1} (${segment.score.toFixed(0)})`;
+      segmentsContainer.appendChild(span);
+    });
+  }
 }
 
 // ---- Chat with Vyas ----

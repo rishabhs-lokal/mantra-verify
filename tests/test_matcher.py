@@ -2,7 +2,14 @@ import unicodedata
 
 import pytest
 
-from matcher import PASS_THRESHOLD, completion_stats, normalize_text, score_match, word_diff
+from matcher import (
+    PASS_THRESHOLD,
+    completion_stats,
+    count_repetitions,
+    normalize_text,
+    score_match,
+    word_diff,
+)
 
 OM_NAMAH_SHIVAYA = "ॐ नमः शिवाय"
 
@@ -215,3 +222,63 @@ class TestCompletionStats:
         diff = word_diff("राम राम राम", "राम राम")
         stats = completion_stats(diff)
         assert stats == {"completion_ratio": pytest.approx(2 / 3), "words_matched": 2, "words_expected": 3}
+
+
+class TestCountRepetitions:
+    def test_counts_exact_back_to_back_repetitions(self):
+        spoken = " ".join([OM_NAMAH_SHIVAYA] * 5)
+        result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
+        assert result["repetitions"] == 5
+        assert len(result["segments"]) == 5
+        assert all(segment["score"] == 100.0 for segment in result["segments"])
+
+    def test_single_recitation_counts_as_one(self):
+        result = count_repetitions(OM_NAMAH_SHIVAYA, OM_NAMAH_SHIVAYA)
+        assert result["repetitions"] == 1
+
+    def test_unrelated_speech_counts_zero(self):
+        result = count_repetitions(OM_NAMAH_SHIVAYA, "गंगा जल पवित्र होता है हमेशा")
+        assert result["repetitions"] == 0
+        assert result["segments"] == []
+
+    def test_empty_spoken_text_counts_zero(self):
+        result = count_repetitions(OM_NAMAH_SHIVAYA, "")
+        assert result == {"repetitions": 0, "segments": []}
+
+    def test_empty_reference_counts_zero(self):
+        result = count_repetitions("", OM_NAMAH_SHIVAYA)
+        assert result == {"repetitions": 0, "segments": []}
+
+    def test_incomplete_trailing_repetition_is_not_counted(self):
+        # Two full repetitions plus a partial third (missing the last word)
+        # shouldn't be counted as three.
+        spoken = " ".join([OM_NAMAH_SHIVAYA] * 2) + " ॐ नमः"
+        result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
+        assert result["repetitions"] == 2
+
+    def test_repetitions_with_devanagari_asr_quirks_still_count(self):
+        # Second repetition uses chandrabindu instead of anusvara — should
+        # still normalize to an equivalent match, same as score_match.
+        spoken = "ॐ नमः शिवाय ॐ नमँ शिवाय"
+        result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
+        assert result["repetitions"] == 2
+
+    def test_segments_advance_past_each_match_without_overlap(self):
+        spoken = " ".join([OM_NAMAH_SHIVAYA] * 3)
+        result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
+        reference_char_length = len(normalize_text(OM_NAMAH_SHIVAYA).replace(" ", ""))
+        total_chars = sum(len(segment["text"]) for segment in result["segments"])
+        # 3 repetitions x the reference's character length, with no character
+        # double-counted across segments.
+        assert result["repetitions"] == 3
+        assert total_chars == reference_char_length * 3
+
+    def test_counts_correctly_when_asr_fuses_words_with_no_spaces(self):
+        # Reproduces a real failure mode found via live testing: Whisper
+        # transcribing rapid, monotonous repetition as run-on text with no
+        # spaces between words at all (not just between repetitions). A
+        # word-count sliding window breaks entirely on this; the
+        # character-level window doesn't care where spaces are.
+        spoken = "ॐनमःशिवायॐनमःशिवायॐनमःशिवाय"
+        result = count_repetitions(OM_NAMAH_SHIVAYA, spoken)
+        assert result["repetitions"] == 3

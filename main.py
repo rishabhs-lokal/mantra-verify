@@ -18,7 +18,14 @@ from pydantic import BaseModel
 import counter
 import history
 import vyas
-from matcher import PASS_THRESHOLD, completion_stats, normalize_text, score_match, word_diff
+from matcher import (
+    PASS_THRESHOLD,
+    completion_stats,
+    count_repetitions,
+    normalize_text,
+    score_match,
+    word_diff,
+)
 from openrouter_client import post as openrouter_post
 from openrouter_client import require_api_key
 
@@ -50,6 +57,18 @@ class VerifyResponse(BaseModel):
     word_diff: list
     words_matched: int
     words_expected: int
+    last_verified_at: Optional[str]
+
+
+class VerifyBatchResponse(BaseModel):
+    detected_repetitions: int
+    count: int
+    target_count: int
+    remaining: int
+    mala_complete: bool
+    transcript: str
+    reference_normalized: str
+    segments: list
     last_verified_at: Optional[str]
 
 
@@ -164,6 +183,59 @@ async def verify(
         word_diff=diff,
         words_matched=stats["words_matched"],
         words_expected=stats["words_expected"],
+        last_verified_at=last_verified_at,
+    )
+
+
+@app.post("/verify_batch", response_model=VerifyBatchResponse)
+async def verify_batch(
+    audio: UploadFile = File(...),
+    reference_text: str = Form(...),
+    session_id: str = Form(...),
+    mantra_id: str = Form(...),
+    target_count: int = Form(108),
+    language: str = Form(TRANSCRIPTION_LANGUAGE),
+):
+    """Verify one recording that covers several repetitions of the mantra
+    back-to-back, rather than one recording per repetition. Detects how many
+    times the mantra was recited and adds all of them to the counter at once.
+    """
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+
+    transcript = await transcribe_audio(
+        audio_bytes, audio.filename or "audio.wav", audio.content_type, language
+    )
+
+    result = count_repetitions(reference_text, transcript)
+    detected = result["repetitions"]
+
+    count, last_verified_at = counter.increment_by(session_id, mantra_id, detected)
+
+    average_score = (
+        sum(segment["score"] for segment in result["segments"]) / detected if detected else 0.0
+    )
+    history.log_verification(
+        session_id=session_id,
+        mantra_id=mantra_id,
+        score=average_score,
+        passed=detected > 0,
+        completion_ratio=min(detected / target_count, 1.0) if target_count else 0.0,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+    remaining = max(target_count - count, 0)
+
+    return VerifyBatchResponse(
+        detected_repetitions=detected,
+        count=count,
+        target_count=target_count,
+        remaining=remaining,
+        mala_complete=count >= target_count,
+        transcript=transcript,
+        reference_normalized=normalize_text(reference_text),
+        segments=result["segments"],
         last_verified_at=last_verified_at,
     )
 

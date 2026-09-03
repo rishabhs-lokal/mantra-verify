@@ -137,6 +137,20 @@ select, textarea, input[type="text"], input[type="number"] {
   color: var(--ink);
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.checkbox-row input[type="checkbox"] {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr 1fr;

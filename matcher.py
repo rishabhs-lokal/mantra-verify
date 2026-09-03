@@ -101,6 +101,42 @@ def word_diff(reference_text: str, spoken_text: str) -> list:
     return diff
 
 
+def count_repetitions(reference_text: str, spoken_text: str, threshold: float = PASS_THRESHOLD) -> dict:
+    """Count how many times reference_text was recited within one continuous
+    spoken_text transcript — e.g. a single recording covering several japa
+    repetitions back-to-back, rather than one recording per repetition.
+
+    Operates on characters, not words: when a short phrase is repeated
+    rapidly with little pause between repetitions, Whisper frequently fuses
+    the words of a single repetition together with no space at all (e.g.
+    "ओम्नमहशिवाय" instead of "ओम् नमः शिवाय") — confirmed empirically, not
+    hypothetically. A word-count sliding window breaks completely on that
+    output since `.split()` no longer yields one token per word. Stripping
+    whitespace and sliding a reference-length *character* window instead
+    sidesteps the problem, since it never depends on where — or whether —
+    ASR placed spaces.
+    """
+    reference_chars = normalize_text(reference_text).replace(" ", "")
+    spoken_chars = normalize_text(spoken_text).replace(" ", "")
+    window_size = len(reference_chars)
+
+    if window_size == 0 or not spoken_chars:
+        return {"repetitions": 0, "segments": []}
+
+    segments = []
+    i = 0
+    while i + window_size <= len(spoken_chars):
+        window = spoken_chars[i : i + window_size]
+        score = fuzz.ratio(reference_chars, window)
+        if score >= threshold:
+            segments.append({"text": window, "score": score})
+            i += window_size
+        else:
+            i += 1
+
+    return {"repetitions": len(segments), "segments": segments}
+
+
 def completion_stats(diff: list) -> dict:
     """Derive how much of the reference mantra was actually recited, from a
     word_diff() result.

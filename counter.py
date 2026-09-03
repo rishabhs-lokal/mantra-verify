@@ -38,16 +38,26 @@ def _key(session_id: str, mantra_id: str) -> str:
 
 
 def increment(session_id: str, mantra_id: str) -> tuple:
-    """Increment the count for this session+mantra on a passing verification.
+    """Increment the count by 1 for this session+mantra on a passing verification.
 
     Returns (count, last_verified_at).
+    """
+    return increment_by(session_id, mantra_id, 1)
+
+
+def increment_by(session_id: str, mantra_id: str, n: int) -> tuple:
+    """Add n repetitions at once — e.g. from a single recording detected to
+    contain n repeats of the mantra back-to-back, rather than one recording
+    per repetition. Returns (count, last_verified_at); last_verified_at is
+    only updated if n > 0.
     """
     with _lock:
         data = _load()
         key = _key(session_id, mantra_id)
         entry = data.get(key, {"count": 0, "last_verified_at": None})
-        entry["count"] += 1
-        entry["last_verified_at"] = datetime.now(timezone.utc).isoformat()
+        entry["count"] += n
+        if n > 0:
+            entry["last_verified_at"] = datetime.now(timezone.utc).isoformat()
         data[key] = entry
         _save(data)
         return entry["count"], entry["last_verified_at"]

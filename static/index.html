@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Vyas — Mantra Sadhana Companion</title>
-<link rel="stylesheet" href="/style.css?v=3" />
+<link rel="stylesheet" href="/style.css?v=4" />
 </head>
 <body>
 <header class="app-header">
@@ -59,6 +59,13 @@
         </label>
       </div>
 
+      <label class="checkbox-row">
+        <input type="checkbox" id="batch-mode" />
+        This one recording has multiple repetitions back-to-back (e.g. say the
+        mantra several times, then stop) — count how many, instead of
+        verifying a single recitation.
+      </label>
+
       <div class="record-row">
         <button id="record-btn" class="btn btn-primary">Start Recording</button>
         <span id="record-indicator" class="record-indicator" hidden>● recording…</span>
@@ -93,6 +100,26 @@
         <p class="transcript-label">Word by word:</p>
         <p id="result-word-diff" class="word-diff"></p>
       </div>
+
+      <div id="batch-result" class="verify-result" hidden>
+        <div class="score-row">
+          <div class="score-box">
+            <span class="score-label">Detected in this recording</span>
+            <span class="score-value" id="batch-detected">–</span>
+          </div>
+        </div>
+
+        <div class="progress-row">
+          <span id="batch-count">0</span> / <span id="batch-target">108</span> repetitions
+          <span id="batch-mala-complete" class="mala-badge" hidden>🕉 Mala complete</span>
+        </div>
+
+        <p class="transcript-label">You said:</p>
+        <p id="batch-transcript" class="transcript"></p>
+
+        <p class="transcript-label">Detected segments:</p>
+        <p id="batch-segments" class="word-diff"></p>
+      </div>
     </section>
 
     <section class="panel chat-panel">
@@ -110,6 +137,6 @@
 
 <audio id="vyas-audio" hidden></audio>
 
-<script src="/app.js"></script>
+<script src="/app.js?v=2"></script>
 </body>
 </html>
