@@ -19,7 +19,7 @@ import counter
 import history
 import vyas
 from matcher import (
-    AI_REVIEW_LOWER_BOUND,
+    LIVE_CHANT_THRESHOLD,
     PASS_THRESHOLD,
     completion_stats,
     count_repetitions,
@@ -286,11 +286,14 @@ async def verify_chant(
     the same character-level sliding-window matcher as /verify_batch, which
     naturally counts however many are actually present (1, 2, 3...)
     regardless of pace. Only when that finds nothing does it fall back to a
-    single whole-utterance comparison, with the AI reviewing anything
-    borderline rather than rejecting outright — this two-stage approach
-    replaced an earlier version that only ever attempted the single-
-    utterance comparison, which was both too strict on accented speech and
-    silently broke on fast chanting.
+    single whole-utterance comparison against matcher.LIVE_CHANT_THRESHOLD.
+
+    Deliberately makes exactly one network call (transcription) and never
+    more — an earlier version added an AI-judge chat-completion call for
+    borderline scores, which meant unpredictable extra latency on exactly
+    the utterances that triggered it. In a real-time continuous-listening
+    loop, consistent speed matters more than the extra leniency that
+    bought, so this trades it for a single lower threshold instead.
 
     Empty transcripts (silence/noise that clipped past the frontend's own
     minimum-duration filter) are treated as an ordinary not-counted result,
@@ -320,7 +323,7 @@ async def verify_chant(
     decision_source = "empty_transcript"
 
     if transcript:
-        rep_result = count_repetitions(reference_text, transcript)
+        rep_result = count_repetitions(reference_text, transcript, threshold=LIVE_CHANT_THRESHOLD)
         repetitions_counted = rep_result["repetitions"]
 
         if repetitions_counted > 0:
@@ -328,15 +331,10 @@ async def verify_chant(
             score = sum(segment["score"] for segment in rep_result["segments"]) / repetitions_counted
         else:
             score = score_match(reference_text, transcript)
-            if score >= PASS_THRESHOLD:
+            if score >= LIVE_CHANT_THRESHOLD:
                 repetitions_counted, decision_source = 1, "fuzzy_pass"
-            elif score < AI_REVIEW_LOWER_BOUND:
-                decision_source = "fuzzy_fail"
             else:
-                verdict = await vyas.judge_chant(reference_text, transcript)
-                decision_source = "ai_judged"
-                if verdict["counted"]:
-                    repetitions_counted = 1
+                decision_source = "fuzzy_fail"
 
     counted = repetitions_counted > 0
 
@@ -394,6 +392,29 @@ async def reset_count(session_id: str, mantra_id: str):
         "count": 0,
         "last_verified_at": None,
     }
+
+
+@app.post("/count/{session_id}/increment", response_model=CountResponse)
+async def increment_count(session_id: str, mantra_id: str, target_count: int = 108):
+    """Increment the counter directly, no audio or analysis involved.
+
+    Powers the Live Chanting Session's initial grace-period chants — the
+    first few repetitions are assumed correct rather than verified (see
+    static/app.js's freeChantsRemaining) — as well as anywhere else a
+    caller wants to advance the count without a /verify_chant round trip.
+    No Whisper call means this is about as fast as a request can be.
+    """
+    count, last_verified_at = counter.increment(session_id, mantra_id)
+    remaining = max(target_count - count, 0)
+    return CountResponse(
+        session_id=session_id,
+        mantra_id=mantra_id,
+        count=count,
+        target_count=target_count,
+        remaining=remaining,
+        mala_complete=count >= target_count,
+        last_verified_at=last_verified_at,
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)

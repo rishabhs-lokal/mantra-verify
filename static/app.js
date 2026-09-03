@@ -3,22 +3,14 @@ const sessionId = getOrCreateSessionId();
 const vyasFigure = document.getElementById("vyas-figure");
 const vyasStatus = document.getElementById("vyas-status");
 const vyasAudio = document.getElementById("vyas-audio");
-const languageSelect = document.getElementById("language-select");
 
-const recordBtn = document.getElementById("record-btn");
-const recordIndicator = document.getElementById("record-indicator");
-const verifyError = document.getElementById("verify-error");
-const verifyResult = document.getElementById("verify-result");
-const batchResult = document.getElementById("batch-result");
-const batchModeCheckbox = document.getElementById("batch-mode");
-
-const chatLog = document.getElementById("chat-log");
-const chatForm = document.getElementById("chat-form");
-const chatInput = document.getElementById("chat-input");
-const chatError = document.getElementById("chat-error");
-
-let mediaRecorder = null;
-let recordedChunks = [];
+// Hardcoded since the settings UI (language/mantra text/mantra id) was
+// removed to keep the screen to just Vyas's portrait and the counter card.
+// If more than one mantra or language is ever needed again, this is the
+// one place to reintroduce configurability.
+const REFERENCE_TEXT = "ॐ नमः शिवाय";
+const MANTRA_ID = "om-namah-shivaya";
+const LANGUAGE = "hi";
 
 function getOrCreateSessionId() {
   let id = localStorage.getItem("vyas_session_id");
@@ -74,208 +66,18 @@ function speakAsVyas(text) {
   });
 }
 
-// ---- Mantra recording + /verify ----
-
-recordBtn.addEventListener("click", async () => {
-  if (mediaRecorder && mediaRecorder.state === "recording") {
-    mediaRecorder.stop();
-    return;
-  }
-  await startRecording();
-});
-
-async function startRecording() {
-  verifyError.hidden = true;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recordedChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) recordedChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = () => {
-      stream.getTracks().forEach((track) => track.stop());
-      recordBtn.textContent = "Start Recording";
-      recordBtn.classList.remove("recording");
-      recordIndicator.hidden = true;
-      const blob = new Blob(recordedChunks, { type: "audio/webm" });
-      submitVerification(blob);
-    };
-
-    mediaRecorder.start();
-    recordBtn.textContent = "Stop Recording";
-    recordBtn.classList.add("recording");
-    recordIndicator.hidden = false;
-    setVyasStatus("Vyas is listening to your recitation…");
-  } catch (err) {
-    verifyError.textContent = `Could not access microphone: ${err.message}`;
-    verifyError.hidden = false;
-  }
-}
-
-async function submitVerification(audioBlob) {
-  verifyError.hidden = true;
-  const isBatch = batchModeCheckbox.checked;
-  setVyasStatus(isBatch ? "Vyas is counting your repetitions…" : "Vyas is checking your recitation…");
-
-  const formData = new FormData();
-  formData.append("audio", audioBlob, "recording.webm");
-  formData.append("reference_text", document.getElementById("reference-text").value);
-  formData.append("session_id", sessionId);
-  formData.append("mantra_id", document.getElementById("mantra-id").value);
-  formData.append("target_count", document.getElementById("target-count").value);
-  formData.append("language", languageSelect.value);
-
-  const endpoint = isBatch ? "/verify_batch" : "/verify";
-
-  try {
-    const response = await fetch(endpoint, { method: "POST", body: formData });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || `Verification failed (${response.status})`);
-    }
-    if (isBatch) {
-      renderBatchResult(data);
-    } else {
-      renderVerifyResult(data);
-    }
-    setVyasStatus("Vyas is listening.");
-  } catch (err) {
-    verifyError.textContent = err.message;
-    verifyError.hidden = false;
-    setVyasStatus("Vyas is listening.");
-  }
-}
-
-function renderVerifyResult(data) {
-  batchResult.hidden = true;
-  verifyResult.hidden = false;
-
-  document.getElementById("result-score").textContent = data.score.toFixed(0);
-  document.getElementById("result-completion").textContent = `${Math.round(data.completion_ratio * 100)}%`;
-  const passedEl = document.getElementById("result-passed");
-  passedEl.textContent = data.passed ? "Passed" : "Try again";
-  passedEl.style.color = data.passed ? "#2f7a3d" : "#b5241f";
-
-  document.getElementById("result-count").textContent = data.count;
-  document.getElementById("result-target").textContent = data.target_count;
-  document.getElementById("result-mala-complete").hidden = !data.mala_complete;
-
-  document.getElementById("result-transcript").textContent = data.transcript;
-
-  const diffContainer = document.getElementById("result-word-diff");
-  diffContainer.innerHTML = "";
-  data.word_diff.forEach(([word, tag]) => {
-    const span = document.createElement("span");
-    span.className = tag;
-    span.textContent = word;
-    diffContainer.appendChild(span);
-  });
-}
-
-function renderBatchResult(data) {
-  verifyResult.hidden = true;
-  batchResult.hidden = false;
-
-  document.getElementById("batch-detected").textContent = data.detected_repetitions;
-  document.getElementById("batch-count").textContent = data.count;
-  document.getElementById("batch-target").textContent = data.target_count;
-  document.getElementById("batch-mala-complete").hidden = !data.mala_complete;
-  document.getElementById("batch-transcript").textContent = data.transcript;
-
-  const segmentsContainer = document.getElementById("batch-segments");
-  segmentsContainer.innerHTML = "";
-  if (data.segments.length === 0) {
-    segmentsContainer.textContent = "No repetitions detected — try recording again with clearer pauses between each one.";
-  } else {
-    data.segments.forEach((segment, i) => {
-      const span = document.createElement("span");
-      span.className = "match";
-      span.textContent = `#${i + 1} (${segment.score.toFixed(0)})`;
-      segmentsContainer.appendChild(span);
-    });
-  }
-}
-
-// ---- Chat with Vyas ----
-
-function appendChatMessage(role, text, pending = false) {
-  const div = document.createElement("div");
-  div.className = `chat-msg ${role}${pending ? " pending" : ""}`;
-  div.textContent = text;
-  chatLog.appendChild(div);
-  chatLog.scrollTop = chatLog.scrollHeight;
-  return div;
-}
-
-chatForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const message = chatInput.value.trim();
-  if (!message) return;
-
-  chatError.hidden = true;
-  appendChatMessage("user", message);
-  chatInput.value = "";
-  const pendingBubble = appendChatMessage("vyas", "…", true);
-
-  try {
-    const response = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, message, language: languageSelect.value }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || `Chat failed (${response.status})`);
-    }
-    pendingBubble.textContent = data.reply;
-    pendingBubble.classList.remove("pending");
-    speakAsVyas(data.reply);
-  } catch (err) {
-    pendingBubble.remove();
-    chatError.textContent = err.message;
-    chatError.hidden = false;
-    setVyasStatus("Vyas is listening.");
-  }
-});
-
-// ---- Live Chanting Session ----
+// ---- Chanting: shared elements + mode toggle ----
 //
-// Continuous mic listening with client-side voice activity detection (VAD):
-// no streaming transcription exists (OpenRouter's Whisper endpoint is
-// one-shot request/response), so this segments speech into individual
-// utterances itself by watching microphone volume, and sends each one to
-// /verify_chant as it ends. It reuses the same reference-text / mantra-id /
-// target-count / language fields as the manual Recite flow above, and the
-// same persistent session+mantra counter (via /verify_chant, which calls
-// counter.increment exactly like /verify does) — this is a continuous-
-// listening front end for the same counting backend, not a separate one.
-//
-// The RMS speech threshold and silence-gap timing below are untested
-// against real microphone hardware/environments and will likely need
-// tuning — they're a reasonable starting point, not a calibrated value.
-
-const SESSION_SPEECH_RMS_THRESHOLD = 0.02; // volume above this counts as "speaking"
-const SESSION_UTTERANCE_SILENCE_GAP_MS = 500; // silence this long marks the end of one utterance (lowered from 700 for faster turnaround)
-const SESSION_MIN_UTTERANCE_MS = 400; // shorter than this is treated as noise, not a real chant, and isn't sent to the server
-// Silence since the last COUNTED chant before the session pauses and shows
-// the Resume button — no spoken prompt first anymore (an earlier version
-// prompted at 10s and paused at 15s; the spoken prompt was cut, so this is
-// just the single remaining threshold).
-const SESSION_PAUSE_MS = 10000;
-const SESSION_POLL_INTERVAL_MS = 75; // lowered from 150 for faster sound detection and faster barge-in reaction
-
-const SESSION_ERROR_STREAK_LIMIT = 3; // this many consecutive not-counted attempts triggers re-teaching + pause
-
-// Spoken reassurance is in Hindi throughout, regardless of the language
-// selector — this is Vyas's own reassurance line, not mantra content.
-// PLACEHOLDER — replace with the real line once you have it.
-const COMPLETION_PLACEHOLDER_TEXT = "बहुत अच्छा। आपने जाप का यह चरण पूरा कर लिया है। शांति बनी रहे।";
+// Two modes, selected before Start is pressed:
+// - "user": you chant, the mic listens continuously (VAD-segmented), each
+//   recognized chant counts down — see the User-Chants section below.
+// - "vyas": Vyas does the chanting (video, once provided — TTS fallback
+//   until then) for however many repetitions you selected; no
+//   listening/counting logic runs at all in this mode.
 
 const targetCountInput = document.getElementById("target-count");
-const hearMantraBtn = document.getElementById("hear-mantra-btn");
+const modeUserBtn = document.getElementById("mode-user-btn");
+const modeVyasBtn = document.getElementById("mode-vyas-btn");
 const sessionStartBtn = document.getElementById("session-start-btn");
 const sessionStopBtn = document.getElementById("session-stop-btn");
 const sessionResumeBtn = document.getElementById("session-resume-btn");
@@ -283,59 +85,161 @@ const sessionCounterWrap = document.getElementById("session-counter-wrap");
 const sessionCounterEl = document.getElementById("session-counter");
 const sessionStatus = document.getElementById("session-status");
 const sessionError = document.getElementById("session-error");
-const sessionLog = document.getElementById("session-log");
 
-// Available even outside a session — lets you check the correct
-// pronunciation any time. Guards against picking up Vyas's own voice as a
-// false chant if a session happens to be listening while this plays.
-hearMantraBtn.addEventListener("click", async () => {
-  if (session) session.vyasSpeaking = true;
-  await speakAsVyas(document.getElementById("reference-text").value);
-  if (session) session.vyasSpeaking = false;
-});
+const MAX_CHANTS_PER_SESSION = 12;
+
+let currentMode = "user"; // "user" | "vyas"
+
+function setMode(mode) {
+  if (session || vyasModeRunning) return; // don't allow switching mid-session
+  currentMode = mode;
+  modeUserBtn.classList.toggle("active", mode === "user");
+  modeVyasBtn.classList.toggle("active", mode === "vyas");
+}
+
+modeUserBtn.addEventListener("click", () => setMode("user"));
+modeVyasBtn.addEventListener("click", () => setMode("vyas"));
 
 function clampTargetCount() {
   let value = parseInt(targetCountInput.value, 10);
-  if (isNaN(value)) value = 108;
-  value = Math.max(1, Math.min(108, value));
+  if (isNaN(value)) value = MAX_CHANTS_PER_SESSION;
+  value = Math.max(1, Math.min(MAX_CHANTS_PER_SESSION, value));
   targetCountInput.value = value;
   return value;
 }
 
 targetCountInput.addEventListener("change", clampTargetCount);
 
-let session = null;
-
 function setSessionStatus(text) {
   sessionStatus.textContent = text;
 }
 
-function logSessionAttempt(text, counted, repetitionsCounted) {
-  const div = document.createElement("div");
-  div.className = `session-log-entry ${counted ? "counted" : "rejected"}`;
-  const countLabel = repetitionsCounted > 1 ? ` (×${repetitionsCounted})` : "";
-  div.textContent = `${counted ? "✓" : "✗"}${countLabel} "${text}"`;
-  sessionLog.prepend(div);
+// Spoken reassurance is in Hindi throughout — this is Vyas's own
+// reassurance line, not mantra content.
+// PLACEHOLDER — replace with the real line once you have it.
+const COMPLETION_PLACEHOLDER_TEXT = "बहुत अच्छा। आपने जाप का यह चरण पूरा कर लिया है। शांति बनी रहे।";
+
+sessionStartBtn.addEventListener("click", () => {
+  if (currentMode === "vyas") {
+    startVyasChantingMode();
+  } else {
+    startChantingSession();
+  }
+});
+sessionStopBtn.addEventListener("click", () => {
+  if (currentMode === "vyas") {
+    stopVyasChantingMode();
+  } else {
+    stopChantingSession(true);
+  }
+});
+sessionResumeBtn.addEventListener("click", resumeSession);
+
+// ---- Vyas Chants mode: playback loop, no verification at all ----
+
+// PLACEHOLDER: set this to the real video path once the asset is provided
+// (e.g. "/vyas-chant.mp4"). Until then, each "play" falls back to speaking
+// the mantra via TTS, so the mode is fully testable without the asset.
+const VYAS_CHANT_VIDEO_SRC = null;
+
+const vyasChantVideo = document.getElementById("vyas-chant-video");
+let vyasModeRunning = false;
+
+function playVyasChantOnce() {
+  if (VYAS_CHANT_VIDEO_SRC) {
+    return new Promise((resolve) => {
+      vyasChantVideo.src = VYAS_CHANT_VIDEO_SRC;
+      vyasChantVideo.hidden = false;
+      vyasChantVideo.onended = () => {
+        vyasChantVideo.hidden = true;
+        resolve();
+      };
+      vyasChantVideo.play();
+    });
+  }
+  return speakAsVyas(REFERENCE_TEXT);
 }
+
+async function startVyasChantingMode() {
+  const count = clampTargetCount();
+  vyasModeRunning = true;
+
+  sessionCounterWrap.hidden = false;
+  sessionCounterEl.textContent = count;
+  sessionStartBtn.hidden = true;
+  sessionStopBtn.hidden = false;
+  sessionResumeBtn.hidden = true;
+
+  for (let remaining = count; remaining > 0; remaining--) {
+    if (!vyasModeRunning) break;
+    await playVyasChantOnce();
+    if (!vyasModeRunning) break;
+    sessionCounterEl.textContent = remaining - 1;
+  }
+
+  sessionStartBtn.hidden = false;
+  sessionStopBtn.hidden = true;
+
+  if (vyasModeRunning) {
+    setSessionStatus("Complete! 🕉");
+    await speakAsVyas(COMPLETION_PLACEHOLDER_TEXT);
+  } else {
+    setSessionStatus("Stopped.");
+  }
+  vyasModeRunning = false;
+}
+
+function stopVyasChantingMode() {
+  vyasModeRunning = false;
+  vyasAudio.pause();
+  vyasChantVideo.pause();
+}
+
+// ---- User Chants mode: continuous mic listening ----
+//
+// Client-side voice activity detection (VAD): no streaming transcription
+// exists (OpenRouter's Whisper endpoint is one-shot request/response), so
+// this segments speech into individual utterances itself by watching
+// microphone volume, and sends each one to /verify_chant as it ends.
+//
+// The RMS speech threshold and silence-gap timing below are untested
+// against real microphone hardware/environments and will likely need
+// tuning — they're a reasonable starting point, not a calibrated value.
+
+const SESSION_SPEECH_RMS_THRESHOLD = 0.02; // volume above this counts as "speaking"
+const SESSION_UTTERANCE_SILENCE_GAP_MS = 500; // silence this long marks the end of one utterance
+const SESSION_MIN_UTTERANCE_MS = 400; // shorter than this is treated as noise, not a real chant, and isn't sent to the server
+// Silence since the last COUNTED chant before the session pauses and shows
+// the Resume button — no spoken prompt first, just the pause.
+const SESSION_PAUSE_MS = 10000;
+const SESSION_POLL_INTERVAL_MS = 75;
+
+const SESSION_ERROR_STREAK_LIMIT = 3; // this many consecutive not-counted attempts triggers re-teaching + pause
+
+// The first few chants are assumed correct rather than verified — no audio
+// is even sent to the server for these, just an immediate counter
+// increment (see countFreeChant()) — before real per-chant analysis
+// (submitChant()) takes over for the rest of the session.
+const FREE_CHANTS_AT_START = 3;
+
+let session = null;
 
 async function startChantingSession() {
   sessionError.hidden = true;
   const targetCount = clampTargetCount();
-  const mantraId = document.getElementById("mantra-id").value;
 
-  // Always start a fresh countdown from the exact number selected — an
-  // earlier version resumed from whatever count had already persisted for
-  // this session+mantra, which looked like an unexplained drop when
+  // Always start a fresh countdown from the exact number selected, rather
+  // than resuming whatever count had already persisted for this
+  // session+mantra — resuming looked like an unexplained drop when
   // re-testing rather than the intended "remembers your progress" behavior.
   try {
     await fetch(
-      `/count/${encodeURIComponent(sessionId)}/reset?mantra_id=${encodeURIComponent(mantraId)}`,
+      `/count/${encodeURIComponent(sessionId)}/reset?mantra_id=${encodeURIComponent(MANTRA_ID)}`,
       { method: "POST" }
     );
   } catch (err) {
     // Non-fatal — worst case this session's count starts from stale progress.
   }
-  const startingRemaining = targetCount;
 
   let stream;
   try {
@@ -358,6 +262,7 @@ async function startChantingSession() {
     analyser,
     dataArray: new Uint8Array(analyser.fftSize),
     targetCount,
+    freeChantsRemaining: FREE_CHANTS_AT_START,
     isSpeaking: false,
     silenceStreakMs: 0,
     utteranceStartedAt: 0,
@@ -371,34 +276,18 @@ async function startChantingSession() {
   };
 
   sessionCounterWrap.hidden = false;
-  sessionCounterEl.textContent = startingRemaining;
+  sessionCounterEl.textContent = targetCount;
   sessionStartBtn.hidden = true;
   sessionStopBtn.hidden = false;
   sessionResumeBtn.hidden = true;
-  sessionLog.innerHTML = "";
 
-  if (startingRemaining <= 0) {
+  if (targetCount <= 0) {
     await finishSession();
     return;
   }
 
-  // Start the poll loop before Vyas even starts talking, not after — while
-  // vyasSpeaking is true it only barge-in-monitors (see pollSession), but
-  // that means sound is being watched for from the very first moment, so
-  // speaking up during the initial mantra demonstration interrupts it
-  // immediately instead of only working once normal listening begins.
-  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
-
-  // Say the mantra once before full listening starts, so you have a
-  // correct-pronunciation reference before you begin.
-  setSessionStatus("Vyas is demonstrating the mantra…");
-  session.vyasSpeaking = true;
-  await speakAsVyas(document.getElementById("reference-text").value);
-
-  if (!session) return; // session may have been stopped while Vyas was speaking
-
-  session.vyasSpeaking = false;
   setSessionStatus("Listening…");
+  session.pollTimer = setInterval(pollSession, SESSION_POLL_INTERVAL_MS);
 }
 
 function getRMS() {
@@ -459,13 +348,17 @@ function endUtteranceRecording() {
   const chunks = session.currentChunks;
   session.currentRecorder.onstop = () => {
     if (duration < SESSION_MIN_UTTERANCE_MS) return; // too short to plausibly be a real chant
-    submitChant(new Blob(chunks, { type: "audio/webm" }));
+    if (session.freeChantsRemaining > 0) {
+      countFreeChant();
+    } else {
+      submitChant(new Blob(chunks, { type: "audio/webm" }));
+    }
   };
   session.currentRecorder.stop();
 }
 
 // Short synthesized tones, not speech — while chanting your eyes are likely
-// closed or unfocused, so a glance at the on-screen status/log text isn't a
+// closed or unfocused, so a glance at the on-screen status text isn't a
 // reliable way to know whether the last chant counted. These give instant
 // audible confirmation without the latency (or interruption) of Vyas
 // actually saying something.
@@ -495,17 +388,53 @@ function playNotCountedTone() {
   playTone(220, 120, 0.08); // quieter, duller — deliberately less noticeable
 }
 
+// Counts a chant immediately with zero analysis and zero network call for
+// audio — only a lightweight increment request. Used for the first
+// FREE_CHANTS_AT_START utterances of a session, assumed correct so the
+// session doesn't start by second-guessing you before you've even settled
+// into a rhythm. The server (not a client-side shadow counter) remains the
+// single source of truth for the displayed remaining count, so there's no
+// risk of the display desyncing once real analysis takes over.
+async function countFreeChant() {
+  if (!session) return;
+  session.freeChantsRemaining -= 1;
+
+  try {
+    const response = await fetch(
+      `/count/${encodeURIComponent(sessionId)}/increment?mantra_id=${encodeURIComponent(MANTRA_ID)}&target_count=${session.targetCount}`,
+      { method: "POST" }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `Count failed (${response.status})`);
+
+    playCountedTone();
+    sessionCounterEl.textContent = data.remaining;
+    session.lastCountedChantAt = Date.now();
+    session.consecutiveErrors = 0;
+
+    if (data.mala_complete) {
+      await finishSession();
+      return;
+    }
+  } catch (err) {
+    sessionError.textContent = err.message;
+    sessionError.hidden = false;
+  }
+
+  if (session && !session.isPaused) setSessionStatus("Listening…");
+}
+
 async function submitChant(blob) {
   if (!session) return;
   setSessionStatus("Checking that chant…");
 
   const formData = new FormData();
   formData.append("audio", blob, "chant.webm");
-  formData.append("reference_text", document.getElementById("reference-text").value);
+  formData.append("reference_text", REFERENCE_TEXT);
   formData.append("session_id", sessionId);
-  formData.append("mantra_id", document.getElementById("mantra-id").value);
+  formData.append("mantra_id", MANTRA_ID);
   formData.append("target_count", session.targetCount);
-  formData.append("language", languageSelect.value);
+  formData.append("language", LANGUAGE);
 
   try {
     const response = await fetch("/verify_chant", { method: "POST", body: formData });
@@ -513,8 +442,6 @@ async function submitChant(blob) {
     if (!response.ok) {
       throw new Error(data.detail || `Chant check failed (${response.status})`);
     }
-
-    if (data.transcript) logSessionAttempt(data.transcript, data.counted, data.repetitions_counted);
 
     if (data.counted) {
       playCountedTone();
@@ -555,7 +482,7 @@ async function handleRepeatedErrors() {
   session.consecutiveErrors = 0;
   setSessionStatus("Vyas is repeating the mantra for you…");
   session.vyasSpeaking = true;
-  await speakAsVyas(document.getElementById("reference-text").value);
+  await speakAsVyas(REFERENCE_TEXT);
   if (!session) return; // stopped while Vyas was speaking
   session.vyasSpeaking = false;
   pauseSession();
@@ -601,7 +528,3 @@ function stopChantingSession(userInitiated = true) {
 
   session = null;
 }
-
-sessionStartBtn.addEventListener("click", startChantingSession);
-sessionStopBtn.addEventListener("click", () => stopChantingSession(true));
-sessionResumeBtn.addEventListener("click", resumeSession);

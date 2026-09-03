@@ -8,26 +8,24 @@ from rapidfuzz import fuzz
 
 PASS_THRESHOLD = 82.0
 
-# Used by the continuous live-chanting flow (/verify_chant): scores below
-# this are confidently wrong (silence, noise, unrelated speech) and skip the
-# AI judge entirely to save cost/latency on every single utterance. Scores
-# in [AI_REVIEW_LOWER_BOUND, PASS_THRESHOLD) are borderline enough that a
-# rigid cutoff would be too rigid either way, so those get a second opinion
-# from the chat model instead (see vyas.judge_chant).
-#
-# Lowered from an initial 60.0 after live testing showed accented/heavily
-# ASR-mangled (but still good-faith) recitations scoring well below that —
-# they were being auto-rejected as "fuzzy_fail" without ever reaching the
-# AI's more lenient judgment. Still an approximation, not a measured value.
-AI_REVIEW_LOWER_BOUND = 35.0
-
-# Used by count_repetitions() when detecting repetitions inside a chant
-# session utterance (see /verify_chant): lower than PASS_THRESHOLD on
-# purpose. PASS_THRESHOLD governs a single, deliberate whole-mantra
-# comparison (/verify); this threshold governs matching short, rapid,
-# possibly-accented chunks inside a longer stream, where holding it to the
-# same strict bar rejected too many legitimate repetitions in testing.
+# Used by count_repetitions() when called from /verify_batch: lower than
+# PASS_THRESHOLD on purpose. PASS_THRESHOLD governs a single, deliberate
+# whole-mantra comparison (/verify); this threshold governs matching short,
+# rapid, possibly-accented chunks inside a longer stream, where holding it
+# to the same strict bar rejected too many legitimate repetitions in
+# testing.
 REPETITION_MATCH_THRESHOLD = 68.0
+
+# Used only by /verify_chant (the live chanting session). Deliberately the
+# most lenient threshold in the app, and the ONLY check that flow makes —
+# no AI-judge fallback for borderline scores like the app used to have.
+# That fallback added a second network call (a chat-completion request) on
+# top of transcription, which meant unpredictable extra latency on exactly
+# the utterances it triggered for. In a real-time continuous-listening loop,
+# consistent speed matters more than the small amount of extra leniency the
+# AI review bought — so this trades that leniency for a single lower fixed
+# bar and a guaranteed one-network-call latency profile per utterance.
+LIVE_CHANT_THRESHOLD = 55.0
 
 # Devanagari punctuation that has no Latin equivalent (danda / double danda).
 _DEVANAGARI_PUNCTUATION = "।॥"

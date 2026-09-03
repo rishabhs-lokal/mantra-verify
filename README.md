@@ -1,13 +1,18 @@
 # mantra_verify
 
 FastAPI backend + static frontend for verifying a spoken Hindu mantra against
-a Devanagari reference text, with **Vyas** — a conversational sage character
-who talks through your practice. Transcription, conversation, and voice
-synthesis all run on OpenRouter's cloud APIs (`openai/whisper-large-v3` for
-speech-to-text, a chat model for Vyas's replies, and a TTS model for his
-voice); text matching is local (rapidfuzz). Tracks verified repetition counts
-per session toward a target (e.g. 108 for a mala), and logs session history
-so Vyas can talk about your actual practice.
+a Devanagari reference text, with **Vyas** — a sage character who leads or
+listens to your practice. Transcription, conversation, and voice synthesis
+all run on OpenRouter's cloud APIs (Whisper for speech-to-text, a chat model
+for Vyas's replies, a TTS model for his voice); text matching is local
+(rapidfuzz). Tracks verified repetition counts per session, logs session
+history so Vyas can talk about your actual practice, and generates Vyas's
+portrait via an image-generation API.
+
+The frontend is deliberately minimal: Vyas's portrait and a counter card are
+the only two things on screen. You pick "You Chant" (mic listens
+continuously, verifies each repetition) or "Vyas Chants" (he leads, no
+verification), a count from 1–12, and press Start.
 
 ## Setup
 
@@ -31,10 +36,9 @@ fail, with a clear 500, until `.env` has a real key in it.
 uvicorn main:app --reload
 ```
 
-Open http://127.0.0.1:8000/ for the frontend — Vyas's character, the mantra
-recorder, and the chat box. It's a static page (`static/index.html` +
-`style.css` + `app.js`) served directly by FastAPI, same origin as the API,
-so there's no CORS setup to worry about.
+Open http://127.0.0.1:8000/ for the frontend. It's a static page
+(`static/index.html` + `style.css` + `app.js`) served directly by FastAPI,
+same origin as the API, so there's no CORS setup to worry about.
 
 ## API
 
@@ -159,28 +163,30 @@ sub-second response time is actually required, the real fix is running
 Whisper locally instead of round-tripping to OpenRouter per utterance —
 a bigger change (accuracy tradeoff, more setup) not implemented here.
 
-Two-stage decision, revised after live testing surfaced two problems with an
-earlier single-stage version (chanting fast broke it silently; accented
-speech was rejected too often):
+Two-stage decision, and deliberately makes exactly **one** network call
+(transcription) — no more:
 
 1. **Repetition detection first** — `count_repetitions()` (the same
    character-level matcher `/verify_batch` uses) checks whether the
    utterance actually contains one or more back-to-back repetitions of the
-   mantra, using `REPETITION_MATCH_THRESHOLD` (68.0, more lenient than
-   `PASS_THRESHOLD`). If it finds N ≥ 1, all N are counted at once —
+   mantra, using `LIVE_CHANT_THRESHOLD` (55.0 — the most lenient threshold
+   in the app). If it finds N ≥ 1, all N are counted at once —
    `decision_source: "matched"`, `repetitions_counted: N`. This is what
    makes chanting speed a non-issue: however many repetitions the
    silence-gap detector failed to split into separate utterances, this
    still finds and counts correctly.
 2. **Only if that finds nothing** does it fall back to a single
-   whole-utterance comparison, exactly like the old logic:
-   - `score >= PASS_THRESHOLD` (82.0) → counted, `decision_source: "fuzzy_pass"`
-   - `score < AI_REVIEW_LOWER_BOUND` (35.0 — loosened from an initial 60.0
-     after real accented speech kept scoring below that) → rejected,
-     `decision_source: "fuzzy_fail"`
-   - Otherwise (borderline) → `vyas.judge_chant()`, a chat-model call with a
-     lenient judge prompt tolerant of ASR noise/accent —
-     `decision_source: "ai_judged"`
+   whole-utterance comparison against the same `LIVE_CHANT_THRESHOLD` —
+   `decision_source: "fuzzy_pass"` if it clears the bar, `"fuzzy_fail"`
+   otherwise.
+
+An earlier version added an AI-judge chat-completion call for borderline
+scores instead of step 2's fixed threshold. Removed: it meant unpredictable
+extra latency on exactly the utterances that triggered it, and in a
+real-time continuous-listening loop consistent speed matters more than the
+small amount of extra leniency that call bought. `vyas.judge_chant()` and
+the code behind it were deleted, not just disconnected, once nothing called
+it anymore.
 
 An empty transcript (silence, or noise that slipped past the frontend's
 minimum-utterance-duration filter) is `decision_source: "empty_transcript"`,
@@ -191,16 +197,26 @@ Response: `{counted, repetitions_counted, decision_source, score, transcript, co
 `repetitions_counted` (not just `counted`) is what gets added to the
 persistent session+mantra counter via `counter.increment_by()`.
 
-All four thresholds (`PASS_THRESHOLD`, `AI_REVIEW_LOWER_BOUND`,
-`REPETITION_MATCH_THRESHOLD`, and the frontend's VAD constants) are
-starting points based on limited real testing, not calibrated values —
-expect to keep tuning them.
+Transcribes with `LIVE_TRANSCRIPTION_MODEL`
+(`openai/whisper-large-v3-turbo`) rather than the standard
+`TRANSCRIPTION_MODEL` used by `/verify`/`/verify_batch`, in response to
+feedback that verification felt slow. **Measured honestly, not assumed**: 3
+timed runs of each model on the same clip put turbo at ~2.7s average vs.
+standard at ~3.5s — a real but modest ~20% gain, with high variance (one
+turbo run took 4.2s, another 1.1s), and turbo's transcription was measurably
+less accurate on identical audio. Kept anyway since `LIVE_CHANT_THRESHOLD`
+already tolerates the accuracy hit, but **this does not make verification
+fast** — 2-4 seconds appears to be roughly the floor for a cloud Whisper
+round-trip regardless of model choice. If sub-second response time is
+actually required, the real fix is running Whisper locally instead of
+round-tripping to OpenRouter per utterance — a bigger change not
+implemented here.
 
 **Known limitation — no idempotency**: if the server successfully processes
-a chant (transcribe + judge + increment) but the HTTP response is lost in
-transit (a real occurrence seen during testing — a flaky connection dropped
-the response after the server had already incremented the counter), the
-client has no way to know the call actually succeeded. A naive retry would
+a chant (transcribe + increment) but the HTTP response is lost in transit (a
+real occurrence seen during testing — a flaky connection dropped the
+response after the server had already incremented the counter), the client
+has no way to know the call actually succeeded. A naive retry would
 double-count. The frontend does not currently retry failed `/verify_chant`
 calls automatically, which avoids the common case, but there's no
 request-level deduplication (e.g. an idempotency key) if a retry does
@@ -216,7 +232,20 @@ session+mantra pair.
 Resets the count (and `last_verified_at`) for one mantra under that session
 back to zero/`null`.
 
+### `POST /count/{session_id}/increment?mantra_id=...&target_count=108`
+
+Increments the counter directly — no audio, no transcription, no analysis.
+Powers the Live Chanting Session's grace-period chants (see below), which
+are assumed correct rather than verified; also usable anywhere else a caller
+wants to advance the count without a `/verify_chant` round trip. Same
+response shape as `GET /count/{session_id}`.
+
 ### `POST /chat`
+
+No frontend UI calls this anymore (the chat box was removed along with
+Settings when the UI was simplified to just the portrait + counter card),
+but the endpoint itself is untouched and still fully functional — useful
+for testing directly, or if a chat surface comes back later.
 
 JSON body: `{"session_id": "...", "message": "...", "language": "hi"}`.
 
@@ -270,12 +299,38 @@ An earlier hand-built SVG placeholder lived directly in `index.html` before
 this; it's gone now that a real portrait exists, but the git history has it
 if you ever want to compare.
 
-## Live Chanting Session
+## The frontend (static/app.js)
 
-The "Live Chanting Session" block in the Recite panel (`static/app.js`,
-bottom section) is a continuous-listening mode: start it once, then chant
-into the mic — each recognized chant automatically counts down a visible
-counter, no manual start/stop per repetition.
+The whole UI is one card: a mode toggle (**You Chant** / **Vyas Chants**), a
+chant count (1–12, `MAX_CHANTS_PER_SESSION`), Start/Stop/Resume, and a
+countdown display. No mantra text box, language selector, or chat UI —
+those existed in earlier iterations and were removed to keep the screen to
+just Vyas's portrait and this card. The mantra, mantra id, and language are
+now hardcoded constants at the top of `app.js`
+(`REFERENCE_TEXT`/`MANTRA_ID`/`LANGUAGE`) — change them there if you need a
+different mantra; there's currently no UI for switching at runtime.
+
+### Vyas Chants mode
+
+No listening, no verification — `counting logic shuts` entirely, per the
+product decision behind this mode. `startVyasChantingMode()` loops
+`playVyasChantOnce()` the selected number of times, counting down a purely
+local display counter (no backend calls at all — this mode doesn't touch
+the persisted session+mantra counter, since nothing is actually being
+verified).
+
+`playVyasChantOnce()` checks `VYAS_CHANT_VIDEO_SRC` first — **currently
+`null`, a placeholder** pending the real video asset. Until that's set,
+every "play" falls back to `speakAsVyas(REFERENCE_TEXT)` (the existing TTS
+pipeline), so the mode is fully testable without the video. Once you have
+the file, set `VYAS_CHANT_VIDEO_SRC` to its path (e.g. `"/vyas-chant.mp4"`)
+and it switches over automatically — same loop, same counter logic, no
+other changes needed.
+
+### You Chant mode
+
+Continuous mic listening: start it once, then chant — each recognized
+chant automatically counts down, no manual start/stop per repetition.
 
 There is no streaming transcription (OpenRouter's Whisper endpoint is
 one-shot request/response), so this segments your speech into individual
@@ -283,76 +338,68 @@ utterances itself, client-side, using simple volume-based voice activity
 detection (VAD) — not a proper VAD library, just an RMS-over-threshold check
 via the Web Audio API (`AnalyserNode`). When volume crosses
 `SESSION_SPEECH_RMS_THRESHOLD` it starts recording; after
-`SESSION_UTTERANCE_SILENCE_GAP_MS` of continuous silence it stops, finalizes
-that utterance's clip, and sends it to `/verify_chant`. Utterances shorter
-than `SESSION_MIN_UTTERANCE_MS` are discarded client-side without even
-calling the server (almost certainly noise, not a real chant).
+`SESSION_UTTERANCE_SILENCE_GAP_MS` (500ms) of continuous silence it stops,
+finalizes that utterance's clip, and sends it to `/verify_chant`.
+Utterances shorter than `SESSION_MIN_UTTERANCE_MS` are discarded
+client-side without even calling the server (almost certainly noise, not a
+real chant). **These thresholds are untested against real microphone
+hardware/environments** — a reasonable starting point, not calibrated
+values; if chanting speed or background noise causes problems, these are
+the first constants to adjust (top of the "User Chants mode" section in
+`app.js`).
 
-**These thresholds are untested against real microphone hardware or
-environments** — they're a reasonable starting point, not calibrated
-values. If chants aren't being detected, or background noise is triggering
-false positives, these are the first constants to adjust (top of the "Live
-Chanting Session" section in `app.js`). `SESSION_UTTERANCE_SILENCE_GAP_MS`
-(500) and `SESSION_POLL_INTERVAL_MS` (75) were both lowered from their
-initial values (700/150) for faster reaction — feedback said the original
-timing felt sluggish.
+**First `FREE_CHANTS_AT_START` chants (3) are assumed correct, not
+verified.** Each detected utterance during this grace period calls
+`countFreeChant()`, which hits `POST /count/{id}/increment` directly — no
+audio upload, no transcription, effectively instant. This is a deliberate
+product decision (not a bug or a shortcut): the session doesn't start by
+second-guessing you before you've settled into a rhythm. The server
+(`data.remaining` from the increment response) stays the single source of
+truth for the displayed count throughout, so there's no risk of the display
+jumping or desyncing once real analysis (`submitChant()`) takes over from
+chant 4 onward.
 
 **Non-visual feedback**: `playCountedTone()`/`playNotCountedTone()` play a
 short synthesized chime (Web Audio API `OscillatorNode`, no TTS round-trip)
 on every chant result — bright/short for counted, quiet/dull for not
-counted. Added because you're not going to be reading the on-screen log
-while chanting with your eyes closed; the tones give the same information
-without requiring that.
+counted. Added because you're not going to be reading on-screen text while
+chanting with your eyes closed; the tones give the same information without
+requiring that.
 
 **Silence timer** — only *counted* chants reset it, not just any detected
-speech: 10s since the last counted chant (`SESSION_PAUSE_MS`) and the
-session pauses entirely (stops listening) until you click **Resume**. An
-earlier version had a spoken "please continue" prompt at 10s and paused at
-15s; the spoken prompt was cut (silent pause + visible Resume button is
-enough), so this is just the one remaining threshold, at the point where
-the prompt used to fire.
+speech: `SESSION_PAUSE_MS` (10s) since the last counted chant and the
+session pauses entirely (stops listening) until you click **Resume** — no
+spoken prompt, just the pause.
 
 **Consecutive-error handling**: `SESSION_ERROR_STREAK_LIMIT` (3) tracks
-not-counted attempts in a row, independent of the silence timers above — a
+not-counted attempts in a row, independent of the silence timer above — a
 chanting *fast* isn't the same as chanting *wrong*. On the 3rd consecutive
-rejection, Vyas re-speaks the mantra (via the same mechanism as "Hear the
-mantra" below) as corrective pronunciation guidance, then the session
-pauses exactly like the silence-timeout case — explicit Resume required,
-consecutive-error count reset to 0.
+rejection, Vyas re-speaks the mantra as corrective pronunciation guidance,
+then the session pauses exactly like the silence-timeout case — explicit
+Resume required, consecutive-error count reset to 0.
 
-**Vyas demonstrates the mantra**: a "🔊 Hear the mantra" button (next to the
-reference-text field) speaks the reference text via `/speak` on demand, and
-`startChantingSession()` also speaks it once automatically before listening
-begins, so you have a correct-pronunciation reference before you start.
-
-**Barge-in**: while Vyas is speaking during an active session (the initial
-mantra demonstration, the 3-error mantra re-teaching, or a manual "Hear the
-mantra" click), `session.vyasSpeaking` is set — but `pollSession()` doesn't
-fully stop, it switches to a lightweight mode that only watches for sound
-and immediately calls `vyasAudio.pause()` the instant any is detected,
-cutting him off rather than making you wait for him to finish. This is also
-what prevents his own voice from leaking through your speakers into the mic
-and registering as a false chant (the same guard serves both purposes) —
-`speakAsVyas()` was changed from resolving when playback *starts* to
-resolving when it *ends* specifically to make this sequencing work, since
-callers need to know when he's actually done (or interrupted) talking, not
-just when he started.
+**Barge-in**: while Vyas is speaking during an active session (the 3-error
+mantra re-teaching), `session.vyasSpeaking` is set — but `pollSession()`
+doesn't fully stop, it switches to a lightweight mode that only watches for
+sound and immediately calls `vyasAudio.pause()` the instant any is
+detected, cutting him off rather than making you wait for him to finish.
+This is also what prevents his own voice from leaking through your
+speakers into the mic and registering as a false chant (the same guard
+serves both purposes) — `speakAsVyas()` was changed from resolving when
+playback *starts* to resolving when it *ends* specifically to make this
+sequencing work, since callers need to know when he's actually done (or
+interrupted) talking, not just when he started.
 
 **Reassurance is spoken in Hindi**: `COMPLETION_PLACEHOLDER_TEXT` is Hindi
-regardless of the language selector — it's Vyas's own reassurance, not
-mantra content, so it doesn't follow the same language choice as
-transcription/chat.
-
-**Completion line is a placeholder** — `COMPLETION_PLACEHOLDER_TEXT` in
-`app.js` is spoken by Vyas when the counter hits zero. Swap it for the real
-line whenever you have it; it's a single string constant, clearly marked.
+regardless of anything else — it's Vyas's own reassurance, not mantra
+content. It's also a **placeholder** — swap it for the real line whenever
+you have it; it's a single string constant, clearly marked, spoken by both
+modes when the counter hits zero.
 
 **Counter always starts fresh**: `startChantingSession()` calls
 `POST /count/{session_id}/reset` before beginning, so every session starts
-its countdown at exactly the number you set. An earlier version resumed
-from whatever count had already persisted for that session+mantra (meant
-to preserve progress across page reloads), but during testing that read as
-an unexplained drop rather than the intended behavior — simplicity won.
+its countdown at exactly the number you set — it does not resume progress
+from a previous session on the same mantra.
 
 **Known limitation — no request idempotency**: see `/verify_chant`'s README
 section above. In rare cases of connection flakiness, a chant could

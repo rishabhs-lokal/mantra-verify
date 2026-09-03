@@ -4,167 +4,52 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Vyas — Mantra Sadhana Companion</title>
-<link rel="stylesheet" href="/style.css?v=6" />
+<link rel="stylesheet" href="/style.css?v=8" />
 </head>
 <body>
 <header class="app-header">
   <h1>Vyas</h1>
-  <p class="subtitle">Your mantra sadhana companion</p>
 </header>
 
-<main class="layout">
+<main class="layout-simple">
 
   <section class="vyas-panel">
     <div class="vyas-figure" id="vyas-figure">
       <img src="/vyas-portrait.png" alt="Vyas, a seated sage beneath a banyan tree" />
+      <video id="vyas-chant-video" playsinline hidden></video>
     </div>
     <p class="vyas-status" id="vyas-status">Vyas is listening.</p>
   </section>
 
-  <section class="side-panels">
+  <section class="panel counter-card">
+    <div class="mode-toggle">
+      <button type="button" id="mode-user-btn" class="mode-btn active">You Chant</button>
+      <button type="button" id="mode-vyas-btn" class="mode-btn">Vyas Chants</button>
+    </div>
 
-    <section class="panel practice-panel">
-      <h2>Recite</h2>
+    <label>Number of chants (1–12)
+      <input id="target-count" type="number" value="12" min="1" max="12" />
+    </label>
 
-      <label>Language
-        <select id="language-select">
-          <option value="hi">Hindi</option>
-          <option value="en">English</option>
-          <option value="sa">Sanskrit</option>
-          <option value="bn">Bengali</option>
-          <option value="ta">Tamil</option>
-          <option value="te">Telugu</option>
-          <option value="mr">Marathi</option>
-          <option value="gu">Gujarati</option>
-          <option value="kn">Kannada</option>
-          <option value="ml">Malayalam</option>
-          <option value="pa">Punjabi</option>
-          <option value="ur">Urdu</option>
-          <option value="ne">Nepali</option>
-          <option value="as">Assamese</option>
-          <option value="sd">Sindhi</option>
-        </select>
-      </label>
+    <div class="record-row">
+      <button id="session-start-btn" class="btn btn-primary">Start</button>
+      <button id="session-stop-btn" class="btn btn-secondary" hidden>Stop</button>
+      <button id="session-resume-btn" class="btn btn-primary" hidden>Resume</button>
+    </div>
 
-      <label>Mantra (reference text)
-        <textarea id="reference-text" rows="2">ॐ नमः शिवाय</textarea>
-      </label>
+    <div id="session-counter-wrap" class="session-counter-wrap" hidden>
+      <div class="session-counter" id="session-counter">–</div>
+      <p class="session-counter-label">chants remaining</p>
+    </div>
 
-      <button type="button" id="hear-mantra-btn" class="btn btn-secondary">🔊 Hear the mantra</button>
-
-      <div class="row">
-        <label>Mantra ID
-          <input id="mantra-id" type="text" value="om-namah-shivaya" />
-        </label>
-        <label>Target count (1–108)
-          <input id="target-count" type="number" value="108" min="1" max="108" />
-        </label>
-      </div>
-
-      <label class="checkbox-row">
-        <input type="checkbox" id="batch-mode" />
-        This one recording has multiple repetitions back-to-back (e.g. say the
-        mantra several times, then stop) — count how many, instead of
-        verifying a single recitation.
-      </label>
-
-      <div class="record-row">
-        <button id="record-btn" class="btn btn-primary">Start Recording</button>
-        <span id="record-indicator" class="record-indicator" hidden>● recording…</span>
-      </div>
-
-      <div id="verify-error" class="error" hidden></div>
-
-      <div id="verify-result" class="verify-result" hidden>
-        <div class="score-row">
-          <div class="score-box">
-            <span class="score-label">Score</span>
-            <span class="score-value" id="result-score">–</span>
-          </div>
-          <div class="score-box">
-            <span class="score-label">Completion</span>
-            <span class="score-value" id="result-completion">–</span>
-          </div>
-          <div class="score-box">
-            <span class="score-label" id="result-passed-label">Result</span>
-            <span class="score-value" id="result-passed">–</span>
-          </div>
-        </div>
-
-        <div class="progress-row">
-          <span id="result-count">0</span> / <span id="result-target">108</span> repetitions
-          <span id="result-mala-complete" class="mala-badge" hidden>🕉 Mala complete</span>
-        </div>
-
-        <p class="transcript-label">You said:</p>
-        <p id="result-transcript" class="transcript"></p>
-
-        <p class="transcript-label">Word by word:</p>
-        <p id="result-word-diff" class="word-diff"></p>
-      </div>
-
-      <div id="batch-result" class="verify-result" hidden>
-        <div class="score-row">
-          <div class="score-box">
-            <span class="score-label">Detected in this recording</span>
-            <span class="score-value" id="batch-detected">–</span>
-          </div>
-        </div>
-
-        <div class="progress-row">
-          <span id="batch-count">0</span> / <span id="batch-target">108</span> repetitions
-          <span id="batch-mala-complete" class="mala-badge" hidden>🕉 Mala complete</span>
-        </div>
-
-        <p class="transcript-label">You said:</p>
-        <p id="batch-transcript" class="transcript"></p>
-
-        <p class="transcript-label">Detected segments:</p>
-        <p id="batch-segments" class="word-diff"></p>
-      </div>
-
-      <hr class="panel-divider" />
-
-      <h3>Live Chanting Session</h3>
-      <p class="session-help">
-        Start a session and chant continuously into the mic — each recognized
-        chant lowers the counter below by one, automatically, using the
-        mantra and target count set above. Pause for 10 seconds and Vyas will
-        prompt you to continue; pause for 15 seconds total and the session
-        pauses until you click Resume.
-      </p>
-
-      <div class="record-row">
-        <button id="session-start-btn" class="btn btn-primary">Start Chanting Session</button>
-        <button id="session-stop-btn" class="btn btn-secondary" hidden>Stop Session</button>
-        <button id="session-resume-btn" class="btn btn-primary" hidden>Resume</button>
-      </div>
-
-      <div id="session-counter-wrap" class="session-counter-wrap" hidden>
-        <div class="session-counter" id="session-counter">–</div>
-        <p class="session-counter-label">chants remaining</p>
-      </div>
-
-      <p id="session-status" class="session-status"></p>
-      <div id="session-error" class="error" hidden></div>
-      <div id="session-log" class="session-log"></div>
-    </section>
-
-    <section class="panel chat-panel">
-      <h2>Talk to Vyas</h2>
-      <div id="chat-log" class="chat-log"></div>
-      <div id="chat-error" class="error" hidden></div>
-      <form id="chat-form" class="chat-form">
-        <input id="chat-input" type="text" placeholder="Ask Vyas something…" autocomplete="off" />
-        <button type="submit" class="btn btn-primary">Send</button>
-      </form>
-    </section>
-
+    <p id="session-status" class="session-status"></p>
+    <div id="session-error" class="error" hidden></div>
   </section>
+
 </main>
 
 <audio id="vyas-audio" hidden></audio>
 
-<script src="/app.js?v=6"></script>
+<script src="/app.js?v=8"></script>
 </body>
 </html>

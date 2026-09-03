@@ -113,65 +113,6 @@ async def generate_reply(message: str, history: list, language: str) -> str:
     return data["choices"][0]["message"]["content"].strip()
 
 
-JUDGE_SYSTEM_PROMPT = """You judge whether a speech-to-text transcript represents a valid, \
-good-faith recitation of a given mantra. Speech-to-text is imperfect for \
-Devanagari/Sanskrit text — tolerate spelling/phonetic differences, missing \
-or altered diacritics, fused/missing spaces between words, and minor word \
-substitutions that a generous human listener would still recognize as an \
-attempt at the mantra. Reject only if the transcript is clearly unrelated \
-speech, silence/noise artifacts, or a completely different phrase.
-
-Reply with exactly one word first: YES or NO. Then, on the same line, a \
-very short reason (under 10 words)."""
-
-
-def parse_judge_response(raw: str) -> bool:
-    """Extract the YES/NO verdict from the judge model's raw reply.
-
-    Only the first word is trusted, and only an exact "YES" counts —
-    anything else (empty, malformed, "NO", "MAYBE", ...) is treated as a
-    rejection. Better to under-count a borderline chant than to silently
-    accept a judge response we didn't actually understand.
-    """
-    stripped = raw.strip()
-    if not stripped:
-        return False
-    first_word = stripped.split()[0].strip(".:,").upper()
-    return first_word == "YES"
-
-
-async def judge_chant(reference_text: str, transcript: str) -> dict:
-    """Ask the chat model whether a borderline-scored chant should count.
-
-    Only called for scores between matcher.AI_REVIEW_LOWER_BOUND and
-    matcher.PASS_THRESHOLD — clear passes/fails never reach this, to avoid
-    an LLM call on every single utterance in a continuous chanting session.
-    """
-    api_key = require_api_key()
-
-    payload = {
-        "model": CHAT_MODEL,
-        "messages": [
-            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Reference mantra: {reference_text}\nTranscribed utterance: {transcript}",
-            },
-        ],
-        "temperature": 0,
-    }
-
-    response = await openrouter_post(
-        OPENROUTER_CHAT_URL,
-        api_key,
-        json=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    data = response.json()
-    raw = data["choices"][0]["message"]["content"].strip()
-    return {"counted": parse_judge_response(raw), "reason": raw}
-
-
 async def synthesize_speech(text: str) -> bytes:
     """Turn text into spoken audio (WAV bytes) via OpenRouter's TTS endpoint."""
     api_key = require_api_key()

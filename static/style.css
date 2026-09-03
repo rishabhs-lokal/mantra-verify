@@ -7,9 +7,7 @@
   --saffron-dark: #b9451c;
   --maroon: #7a2e1d;
   --border: #e7d3b8;
-  --match: #2f7a3d;
   --missing: #b5241f;
-  --extra: #b98a1c;
 }
 
 * { box-sizing: border-box; }
@@ -33,33 +31,21 @@ body {
   letter-spacing: 0.05em;
 }
 
-.subtitle {
-  margin: 0.2rem 0 0;
-  color: var(--muted);
-}
-
-.layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 380px) 1fr;
+/* Deliberately just two things: Vyas's portrait and the counter card,
+   stacked in a single centered column. */
+.layout-simple {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 1.5rem;
-  max-width: 1100px;
+  max-width: 420px;
   margin: 1.5rem auto;
   padding: 0 1rem;
 }
 
-@media (max-width: 800px) {
-  .layout { grid-template-columns: 1fr; }
-}
-
 .vyas-panel {
-  position: sticky;
-  top: 1rem;
-  align-self: start;
   text-align: center;
-}
-
-@media (max-width: 800px) {
-  .vyas-panel { position: static; }
+  width: 100%;
 }
 
 .vyas-figure {
@@ -67,9 +53,11 @@ body {
   overflow: hidden;
   display: inline-block;
   max-width: 340px;
+  width: 100%;
 }
 
-.vyas-figure img {
+.vyas-figure img,
+.vyas-figure video {
   display: block;
   width: 100%;
   border-radius: 16px;
@@ -98,23 +86,40 @@ body {
   margin-top: 0.5rem;
 }
 
-.side-panels {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
 .panel {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.25rem;
+  width: 100%;
 }
 
-.panel h2 {
-  margin-top: 0;
-  color: var(--maroon);
-  font-size: 1.2rem;
+.counter-card {
+  text-align: center;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-btn {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.6rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  background: var(--saffron);
+  border-color: var(--saffron);
+  color: white;
+  font-weight: 600;
 }
 
 label {
@@ -122,9 +127,10 @@ label {
   font-size: 0.85rem;
   color: var(--muted);
   margin-bottom: 0.75rem;
+  text-align: left;
 }
 
-select, textarea, input[type="text"], input[type="number"] {
+input[type="number"] {
   display: block;
   width: 100%;
   margin-top: 0.3rem;
@@ -135,26 +141,7 @@ select, textarea, input[type="text"], input[type="number"] {
   font-family: inherit;
   background: #fff;
   color: var(--ink);
-}
-
-.checkbox-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--ink);
-  line-height: 1.4;
-}
-
-.checkbox-row input[type="checkbox"] {
-  margin-top: 0.2rem;
-  flex-shrink: 0;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  text-align: center;
 }
 
 .btn {
@@ -165,18 +152,12 @@ select, textarea, input[type="text"], input[type="number"] {
   cursor: pointer;
 }
 
-#hear-mantra-btn {
-  margin-bottom: 1rem;
-}
-
 .btn-primary {
   background: var(--saffron);
   color: white;
 }
 
 .btn-primary:hover { background: var(--saffron-dark); }
-
-.btn-primary.recording { background: var(--missing); }
 
 .btn-secondary {
   background: #fff;
@@ -186,23 +167,12 @@ select, textarea, input[type="text"], input[type="number"] {
 
 .btn-secondary:hover { background: var(--bg); }
 
-.panel-divider {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 1.5rem 0;
-}
-
-.panel h3 {
-  color: var(--maroon);
-  font-size: 1rem;
-  margin: 0 0 0.5rem;
-}
-
-.session-help {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin: 0 0 1rem;
-  line-height: 1.4;
+.record-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
 }
 
 .session-counter-wrap {
@@ -229,34 +199,6 @@ select, textarea, input[type="text"], input[type="number"] {
   min-height: 1.2em;
 }
 
-.session-log {
-  margin-top: 0.75rem;
-  max-height: 160px;
-  overflow-y: auto;
-  font-size: 0.85rem;
-}
-
-.session-log-entry {
-  padding: 0.3rem 0.5rem;
-  border-radius: 6px;
-  margin-bottom: 0.25rem;
-}
-
-.session-log-entry.counted { background: #eaf5ec; color: var(--match); }
-.session-log-entry.rejected { background: #fdecea; color: var(--missing); }
-
-.record-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.record-indicator {
-  color: var(--missing);
-  font-weight: 600;
-}
-
 .error {
   background: #fdecea;
   color: var(--missing);
@@ -265,111 +207,5 @@ select, textarea, input[type="text"], input[type="number"] {
   padding: 0.6rem 0.8rem;
   margin-top: 0.75rem;
   font-size: 0.9rem;
-}
-
-.verify-result { margin-top: 1rem; }
-
-.score-row {
-  display: flex;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.score-box {
-  flex: 1;
-  background: var(--bg);
-  border-radius: 8px;
-  padding: 0.6rem;
-  text-align: center;
-}
-
-.score-label {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-
-.score-value {
-  display: block;
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--maroon);
-}
-
-.progress-row {
-  font-size: 0.95rem;
-  margin-bottom: 0.75rem;
-}
-
-.mala-badge {
-  margin-left: 0.5rem;
-  background: var(--saffron);
-  color: white;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-}
-
-.transcript-label {
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin: 0.5rem 0 0.2rem;
-}
-
-.transcript {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.word-diff span {
-  padding: 0.05rem 0.3rem;
-  border-radius: 4px;
-  margin-right: 0.2rem;
-  display: inline-block;
-}
-
-.word-diff .match { color: var(--match); }
-.word-diff .missing { color: var(--missing); text-decoration: line-through; }
-.word-diff .extra { color: var(--extra); font-style: italic; }
-
-.chat-log {
-  height: 260px;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.75rem;
-  background: var(--bg);
-  margin-bottom: 0.75rem;
-}
-
-.chat-msg {
-  margin-bottom: 0.6rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 10px;
-  max-width: 85%;
-  font-size: 0.95rem;
-  line-height: 1.4;
-}
-
-.chat-msg.user {
-  background: var(--saffron);
-  color: white;
-  margin-left: auto;
-  text-align: right;
-}
-
-.chat-msg.vyas {
-  background: #fff;
-  border: 1px solid var(--border);
-}
-
-.chat-msg.vyas.pending { color: var(--muted); font-style: italic; }
-
-.chat-form {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.chat-form input {
-  flex: 1;
+  text-align: left;
 }

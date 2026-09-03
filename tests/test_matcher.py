@@ -3,7 +3,7 @@ import unicodedata
 import pytest
 
 from matcher import (
-    AI_REVIEW_LOWER_BOUND,
+    LIVE_CHANT_THRESHOLD,
     PASS_THRESHOLD,
     REPETITION_MATCH_THRESHOLD,
     completion_stats,
@@ -304,11 +304,4 @@ class TestCountRepetitions:
 
 class TestThresholdOrdering:
     def test_thresholds_are_ordered_sensibly(self):
-        # AI_REVIEW_LOWER_BOUND to PASS_THRESHOLD is the "ask the AI" zone
-        # for /verify_chant's single-utterance fallback; if these ever
-        # cross, that zone silently vanishes or inverts.
-        assert 0 < AI_REVIEW_LOWER_BOUND < PASS_THRESHOLD <= 100
-        # REPETITION_MATCH_THRESHOLD governs count_repetitions() and is
-        # deliberately more lenient than the single-utterance PASS_THRESHOLD
-        # (see matcher.py's comment on why these differ).
-        assert AI_REVIEW_LOWER_BOUND < REPETITION_MATCH_THRESHOLD < PASS_THRESHOLD
+        assert 0 < LIVE_CHANT_THRESHOLD < REPETITION_MATCH_THRESHOLD < PASS_THRESHOLD <= 100
