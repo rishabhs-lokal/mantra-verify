@@ -25,9 +25,9 @@ import type { FlowType, PracticeCard } from './types';
 export const SOLO_JAAP_TARGET = 12;
 
 export const preferences = [
-  { id: 'meditation' as FlowType, label: 'Meditation', description: 'Saans, stillness aur mindful guidance.', icon: GiLotusFlower },
   { id: 'mantra' as FlowType, label: 'Mantra Chant', description: 'Apna mantra chunein aur seedha jaap shuru karein.', icon: GiPrayerBeads },
-  { id: 'samadhan' as FlowType, label: 'Problem Ka Samadhan', description: 'Dil ki baat chunein, mantra-based samadhan paayein.', icon: GiHealing }
+  { id: 'samadhan' as FlowType, label: 'Problem Ka Samadhan', description: 'Dil ki baat chunein, mantra-based samadhan paayein.', icon: GiHealing },
+  { id: 'meditation' as FlowType, label: 'Meditation', description: 'Saans, stillness aur mindful guidance.', icon: GiLotusFlower }
 ];
 
 export const practices: Record<FlowType, PracticeCard[]> = {
