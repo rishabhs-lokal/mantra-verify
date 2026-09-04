@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: ved-backend
+    runtime: python
+    rootDir: ved-main 2/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SHEETS_WEBAPP_URL
+        sync: false
+      - key: SHEETS_SHARED_SECRET
+        sync: false

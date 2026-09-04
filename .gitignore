@@ -10,3 +10,4 @@ vyas/data/history.json
 node_modules/
 dist/
 .venv/
+*.tsbuildinfo

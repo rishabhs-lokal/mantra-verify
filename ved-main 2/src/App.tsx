@@ -1,11 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Sparkles } from 'lucide-react';
 import { vedApi } from './api';
 import { practices, preferences } from './data';
 import type { FlowType, OfferingStats, PracticeCard } from './types';
 import { useBackNavigation } from './useBackNavigation';
 import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
+import { vyasMantraConfig } from './vyasMantras';
+
+const VYAS_API_BASE = '/api/vyas';
+const VYAS_LANGUAGE = 'hi';
+const VYAS_MAX_CHANTS = 12;
+const VYAS_SPEECH_RMS_THRESHOLD = 0.02;
+const VYAS_UTTERANCE_SILENCE_GAP_MS = 500;
+const VYAS_MIN_UTTERANCE_MS = 400;
+const VYAS_SESSION_PAUSE_MS = 10000;
+const VYAS_POLL_INTERVAL_MS = 75;
+const VYAS_ERROR_STREAK_LIMIT = 3;
+const VYAS_FREE_CHANTS_AT_START = 3;
+
+type VyasMode = 'user' | 'vyas';
+type VyasPhase = 'idle' | 'running' | 'paused';
+
+interface VyasChantSession {
+  stream: MediaStream;
+  audioContext: AudioContext;
+  analyser: AnalyserNode;
+  dataArray: Uint8Array<ArrayBuffer>;
+  targetCount: number;
+  freeChantsRemaining: number;
+  isSpeaking: boolean;
+  silenceStreakMs: number;
+  utteranceStartedAt: number;
+  currentRecorder: MediaRecorder | null;
+  currentChunks: Blob[];
+  lastCountedChantAt: number;
+  consecutiveErrors: number;
+  isPaused: boolean;
+  pollTimer: number | null;
+}
 
 const emptyStats: OfferingStats = { ok: false, is_new_user: true, counts_30d: {}, recently_used_item_id: null };
 
@@ -59,7 +92,7 @@ function App() {
         {screen === 'room' && flow && selected && (
           flow === 'meditation'
             ? <MeditationRoom item={selected} onComplete={complete} />
-            : <MantraRoom flow={flow} item={selected} count={count} onCount={addCount} onReset={() => setCount(0)} onComplete={complete} />
+            : <VyasMantraRoom item={selected} flow={flow} sessionId={userId} onComplete={complete} />
         )}
       </div>
       <div className={`toast ${toast ? 'show' : ''}`} role="status">{toast}</div>
@@ -134,16 +167,464 @@ function Choices({ flow, stats, onChoose }: { flow: FlowType; stats: OfferingSta
   </>;
 }
 
-function MantraRoom({ flow, item, count, onCount, onReset, onComplete }: { flow: FlowType; item: PracticeCard; count: number; onCount: () => void; onReset: () => void; onComplete: () => void }) {
+function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeCard; flow: FlowType; sessionId: string; onComplete: () => void }) {
   const isSamadhan = flow === 'samadhan';
-  return <RoomFrame item={item}>
-    <span className="room-kicker">{isSamadhan ? `${item.label} · Aapka mantra samadhan` : 'Mantra Room'}</span>
-    <h1>{isSamadhan ? item.mantra : item.label}</h1>
-    <p className="room-desc">{isSamadhan ? 'Is mantra ko shraddha aur steady breath ke saath repeat karein.' : item.description}</p>
-    {isSamadhan && <span className="samadhan-note">Recommended for your selected category</span>}
-    <button className="jaap-button" type="button" onClick={onCount} aria-label="Count one mantra repetition"><span><b>{count}</b><small>Tap to count</small></span></button>
-    <div className="room-actions"><button type="button" onClick={onReset}><RotateCcw size={16} /> Reset</button><button type="button" onClick={onComplete}><Check size={16} /> Complete</button></div>
-  </RoomFrame>;
+  // Samadhan cards recommend a mantra by its display label (item.mantra,
+  // e.g. "Om Namah Shivaya") rather than by id, since practices.samadhan
+  // and practices.mantra are separate lists — resolve back to the actual
+  // mantra id so the same vyasMantraConfig entry (and its video) is used
+  // as when picking that mantra directly from the Mantra Chant flow.
+  const mantraId = isSamadhan
+    ? practices.mantra.find((m) => m.label === item.mantra)?.id ?? item.id
+    : item.id;
+  const config = vyasMantraConfig[mantraId];
+  const referenceText = config?.referenceText ?? item.label;
+  const youtubeId = config?.youtubeId ?? null;
+  const displayLabel = isSamadhan ? item.mantra ?? item.label : item.label;
+  const roomKicker = isSamadhan ? `${item.label} · Aapka mantra samadhan` : 'Mantra Room · Vyas ke saath';
+
+  const [mode, setMode] = useState<VyasMode>('user');
+  const [targetCount, setTargetCount] = useState(VYAS_MAX_CHANTS);
+  const [phase, setPhase] = useState<VyasPhase>('idle');
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const [statusText, setStatusText] = useState('');
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [videoVisible, setVideoVisible] = useState(false);
+
+  const sessionRef = useRef<VyasChantSession | null>(null);
+  const vyasModeRunningRef = useRef(false);
+  const ytPlayerRef = useRef<any>(null);
+  const ytContainerRef = useRef<HTMLDivElement>(null);
+  const ytEndedResolveRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      vyasModeRunningRef.current = false;
+      const session = sessionRef.current;
+      if (session) {
+        if (session.pollTimer) window.clearInterval(session.pollTimer);
+        if (session.currentRecorder && session.currentRecorder.state === 'recording') session.currentRecorder.stop();
+        session.stream.getTracks().forEach((track) => track.stop());
+        void session.audioContext.close();
+        sessionRef.current = null;
+      }
+      if (ytPlayerRef.current?.destroy) ytPlayerRef.current.destroy();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function clampTarget(value: number) {
+    if (Number.isNaN(value)) value = VYAS_MAX_CHANTS;
+    return Math.max(1, Math.min(VYAS_MAX_CHANTS, value));
+  }
+
+  // ---- Vyas Chants mode: looped video playback, no verification at all ----
+
+  async function ensureYtPlayer(): Promise<any> {
+    if (ytPlayerRef.current) return ytPlayerRef.current;
+    const YT = await loadYouTubeApi();
+    return new Promise((resolve) => {
+      // No videoId here — passing one makes the player auto-cue/play on its
+      // own the moment it's ready, racing with our explicit loadVideoById()
+      // call in playVyasChantOnce() below (that race was why looping broke:
+      // two overlapping playbacks).
+      //
+      // onStateChange is registered exactly once, for the player's entire
+      // lifetime, rather than via addEventListener per loop iteration —
+      // the iframe API's removeEventListener does not reliably detach a
+      // per-iteration listener in practice, so add/remove-per-loop left
+      // stale listeners stacking up on every repeat. A single listener
+      // that resolves whatever the "current" pending promise is (tracked
+      // in ytEndedResolveRef) avoids that entirely.
+      const player = new YT.Player(ytContainerRef.current, {
+        width: '100%',
+        height: '100%',
+        playerVars: { playsinline: 1, rel: 0, controls: 0, modestbranding: 1 },
+        events: {
+          onReady: () => { ytPlayerRef.current = player; resolve(player); },
+          onStateChange: (event: any) => {
+            if (event.data === window.YT.PlayerState.ENDED) {
+              const resolvePending = ytEndedResolveRef.current;
+              ytEndedResolveRef.current = null;
+              resolvePending?.();
+            }
+          }
+        }
+      });
+    });
+  }
+
+  function playVyasChantOnce(): Promise<void> {
+    if (!youtubeId) return Promise.resolve();
+    return new Promise(async (resolve) => {
+      const player = await ensureYtPlayer();
+      setVideoVisible(true);
+      ytEndedResolveRef.current = resolve;
+      // loadVideoById (not seekTo+playVideo) is what reliably restarts and
+      // auto-plays from 0 — seek+play left the player paused on a "replay"
+      // thumbnail instead of continuing into the next loop.
+      player.loadVideoById(youtubeId);
+    });
+  }
+
+  async function startVyasChantingMode() {
+    if (!youtubeId) {
+      setErrorText('No video is set up for this mantra yet.');
+      return;
+    }
+    const target = clampTarget(targetCount);
+    setTargetCount(target);
+    vyasModeRunningRef.current = true;
+    setPhase('running');
+    setRemaining(target);
+    setStatusText('');
+    setErrorText(null);
+
+    for (let rem = target; rem > 0; rem--) {
+      if (!vyasModeRunningRef.current) break;
+      await playVyasChantOnce();
+      if (!vyasModeRunningRef.current) break;
+      setRemaining(rem - 1);
+    }
+
+    setVideoVisible(false);
+    const completed = vyasModeRunningRef.current;
+    vyasModeRunningRef.current = false;
+    setPhase('idle');
+
+    if (completed) {
+      setStatusText('Complete! 🕉');
+      onComplete();
+    } else {
+      setStatusText('Stopped.');
+    }
+  }
+
+  function stopVyasChantingMode() {
+    vyasModeRunningRef.current = false;
+    if (ytPlayerRef.current?.pauseVideo) ytPlayerRef.current.pauseVideo();
+    setVideoVisible(false);
+    setPhase('idle');
+    setStatusText('Stopped.');
+  }
+
+  // ---- User Chants mode: continuous mic listening, verified via /verify_chant ----
+
+  function getRMS(session: VyasChantSession) {
+    session.analyser.getByteTimeDomainData(session.dataArray);
+    let sumSquares = 0;
+    for (let i = 0; i < session.dataArray.length; i++) {
+      const normalized = (session.dataArray[i] - 128) / 128;
+      sumSquares += normalized * normalized;
+    }
+    return Math.sqrt(sumSquares / session.dataArray.length);
+  }
+
+  function playTone(frequency: number, durationMs: number, volume: number) {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = frequency;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000);
+      osc.start();
+      osc.stop(ctx.currentTime + durationMs / 1000);
+      osc.onended = () => ctx.close();
+    } catch {
+      // non-fatal — skip the tone if Web Audio misbehaves
+    }
+  }
+
+  const playCountedTone = () => playTone(880, 150, 0.15);
+  const playNotCountedTone = () => playTone(220, 120, 0.08);
+
+  async function startChantingSession() {
+    setErrorText(null);
+    const target = clampTarget(targetCount);
+    setTargetCount(target);
+
+    try {
+      await fetch(`${VYAS_API_BASE}/count/${encodeURIComponent(sessionId)}/reset?mantra_id=${encodeURIComponent(mantraId)}`, { method: 'POST' });
+    } catch {
+      // non-fatal — worst case this session's count starts from stale progress
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err: any) {
+      setErrorText(`Could not access microphone: ${err.message}`);
+      return;
+    }
+
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+
+    const session: VyasChantSession = {
+      stream,
+      audioContext,
+      analyser,
+      dataArray: new Uint8Array(new ArrayBuffer(analyser.fftSize)),
+      targetCount: target,
+      freeChantsRemaining: VYAS_FREE_CHANTS_AT_START,
+      isSpeaking: false,
+      silenceStreakMs: 0,
+      utteranceStartedAt: 0,
+      currentRecorder: null,
+      currentChunks: [],
+      lastCountedChantAt: Date.now(),
+      consecutiveErrors: 0,
+      isPaused: false,
+      pollTimer: null
+    };
+    sessionRef.current = session;
+
+    setPhase('running');
+    setRemaining(target);
+
+    if (target <= 0) {
+      finishSession(session);
+      return;
+    }
+
+    setStatusText('Listening…');
+    session.pollTimer = window.setInterval(() => pollSession(session), VYAS_POLL_INTERVAL_MS);
+  }
+
+  function pollSession(session: VyasChantSession) {
+    if (sessionRef.current !== session || session.isPaused) return;
+
+    const speaking = getRMS(session) > VYAS_SPEECH_RMS_THRESHOLD;
+
+    if (speaking) {
+      session.silenceStreakMs = 0;
+      if (!session.isSpeaking) {
+        session.isSpeaking = true;
+        beginUtteranceRecording(session);
+      }
+    } else if (session.isSpeaking) {
+      session.silenceStreakMs += VYAS_POLL_INTERVAL_MS;
+      if (session.silenceStreakMs >= VYAS_UTTERANCE_SILENCE_GAP_MS) {
+        session.isSpeaking = false;
+        endUtteranceRecording(session);
+      }
+    }
+
+    checkSilenceTimers(session);
+  }
+
+  function beginUtteranceRecording(session: VyasChantSession) {
+    session.utteranceStartedAt = Date.now();
+    session.currentChunks = [];
+    session.currentRecorder = new MediaRecorder(session.stream);
+    session.currentRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) session.currentChunks.push(e.data);
+    };
+    session.currentRecorder.start();
+  }
+
+  function endUtteranceRecording(session: VyasChantSession) {
+    if (!session.currentRecorder || session.currentRecorder.state !== 'recording') return;
+    const duration = Date.now() - session.utteranceStartedAt;
+    const chunks = session.currentChunks;
+    session.currentRecorder.onstop = () => {
+      if (duration < VYAS_MIN_UTTERANCE_MS) return; // too short to plausibly be a real chant
+      if (session.freeChantsRemaining > 0) {
+        void countFreeChant(session);
+      } else {
+        void submitChant(session, new Blob(chunks, { type: 'audio/webm' }));
+      }
+    };
+    session.currentRecorder.stop();
+  }
+
+  async function countFreeChant(session: VyasChantSession) {
+    if (sessionRef.current !== session) return;
+    session.freeChantsRemaining -= 1;
+
+    try {
+      const response = await fetch(
+        `${VYAS_API_BASE}/count/${encodeURIComponent(sessionId)}/increment?mantra_id=${encodeURIComponent(mantraId)}&target_count=${session.targetCount}`,
+        { method: 'POST' }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Count failed (${response.status})`);
+
+      playCountedTone();
+      setRemaining(data.remaining);
+      session.lastCountedChantAt = Date.now();
+      session.consecutiveErrors = 0;
+
+      if (data.mala_complete) {
+        finishSession(session);
+        return;
+      }
+    } catch (err: any) {
+      setErrorText(err.message);
+    }
+
+    if (sessionRef.current === session && !session.isPaused) setStatusText('Listening…');
+  }
+
+  async function submitChant(session: VyasChantSession, blob: Blob) {
+    if (sessionRef.current !== session) return;
+    setStatusText('Checking that chant…');
+
+    const formData = new FormData();
+    formData.append('audio', blob, 'chant.webm');
+    formData.append('reference_text', referenceText);
+    formData.append('session_id', sessionId);
+    formData.append('mantra_id', mantraId);
+    formData.append('target_count', String(session.targetCount));
+    formData.append('language', VYAS_LANGUAGE);
+
+    try {
+      const response = await fetch(`${VYAS_API_BASE}/verify_chant`, { method: 'POST', body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Chant check failed (${response.status})`);
+
+      if (data.counted) {
+        playCountedTone();
+        setRemaining(data.remaining);
+        session.lastCountedChantAt = Date.now();
+        session.consecutiveErrors = 0;
+
+        if (data.mala_complete) {
+          finishSession(session);
+          return;
+        }
+      } else {
+        playNotCountedTone();
+        session.consecutiveErrors += 1;
+        if (session.consecutiveErrors >= VYAS_ERROR_STREAK_LIMIT) {
+          handleRepeatedErrors(session);
+          return;
+        }
+      }
+
+      if (sessionRef.current === session && !session.isPaused) setStatusText('Listening…');
+    } catch (err: any) {
+      setErrorText(err.message);
+    }
+  }
+
+  function checkSilenceTimers(session: VyasChantSession) {
+    if (sessionRef.current !== session || session.isPaused) return;
+    const elapsed = Date.now() - session.lastCountedChantAt;
+    if (elapsed >= VYAS_SESSION_PAUSE_MS) pauseSession(session);
+  }
+
+  function handleRepeatedErrors(session: VyasChantSession) {
+    session.consecutiveErrors = 0;
+    pauseSession(session);
+    setStatusText('Rukiye — dhyaan se jaap karein aur Resume dabayein.');
+  }
+
+  function pauseSession(session: VyasChantSession) {
+    if (sessionRef.current !== session || session.isPaused) return;
+    session.isPaused = true;
+    if (session.pollTimer) window.clearInterval(session.pollTimer);
+    if (session.isSpeaking) endUtteranceRecording(session);
+    setPhase('paused');
+    setStatusText((prev) => prev || 'Paused — click Resume to continue.');
+  }
+
+  function resumeSession() {
+    const session = sessionRef.current;
+    if (!session) return;
+    session.isPaused = false;
+    session.lastCountedChantAt = Date.now();
+    setPhase('running');
+    setStatusText('Listening…');
+    session.pollTimer = window.setInterval(() => pollSession(session), VYAS_POLL_INTERVAL_MS);
+  }
+
+  function finishSession(session: VyasChantSession) {
+    setStatusText('Complete! 🕉');
+    stopChantingSession(session, false);
+    onComplete();
+  }
+
+  function stopChantingSession(session: VyasChantSession, userInitiated = true) {
+    if (sessionRef.current !== session) return;
+    if (session.pollTimer) window.clearInterval(session.pollTimer);
+    if (session.currentRecorder && session.currentRecorder.state === 'recording') session.currentRecorder.stop();
+    session.stream.getTracks().forEach((track) => track.stop());
+    void session.audioContext.close();
+
+    sessionRef.current = null;
+    setPhase('idle');
+    if (userInitiated) setStatusText('Session stopped.');
+  }
+
+  function handleStart() {
+    if (mode === 'vyas') void startVyasChantingMode();
+    else void startChantingSession();
+  }
+
+  function handleStop() {
+    if (mode === 'vyas') stopVyasChantingMode();
+    else {
+      const session = sessionRef.current;
+      if (session) stopChantingSession(session, true);
+    }
+  }
+
+  return (
+    <RoomFrame item={item}>
+      <span className="room-kicker">{roomKicker}</span>
+      <h1>{displayLabel}</h1>
+      {isSamadhan && <span className="samadhan-note">Recommended for your selected category</span>}
+
+      <div className="vyas-figure">
+        {!videoVisible && <img src="/vyas-portrait.png" alt="Vyas, a seated sage beneath a banyan tree" />}
+        <div className="vyas-video-wrap" hidden={!videoVisible}>
+          <div ref={ytContainerRef} />
+        </div>
+      </div>
+      <p className="vyas-status">{statusText || (phase === 'idle' ? 'Vyas is ready.' : '')}</p>
+
+      <div className="mode-toggle">
+        <button type="button" className={`mode-btn ${mode === 'user' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('user')}>You Chant</button>
+        <button type="button" className={`mode-btn ${mode === 'vyas' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('vyas')}>Vyas Chants</button>
+      </div>
+
+      {phase === 'idle' && (
+        <label className="target-count-label">
+          Number of chants (1–{VYAS_MAX_CHANTS})
+          <input
+            type="number"
+            min={1}
+            max={VYAS_MAX_CHANTS}
+            value={targetCount}
+            onChange={(e) => setTargetCount(Number(e.target.value))}
+            onBlur={(e) => setTargetCount(clampTarget(Number(e.target.value)))}
+          />
+        </label>
+      )}
+
+      {remaining !== null && phase !== 'idle' && (
+        <div className="session-counter-wrap">
+          <div className="session-counter">{remaining}</div>
+          <p className="session-counter-label">chants remaining</p>
+        </div>
+      )}
+
+      <div className="room-actions">
+        {phase === 'idle' && <button type="button" onClick={handleStart}>Start</button>}
+        {phase === 'running' && <button type="button" onClick={handleStop}>Stop</button>}
+        {phase === 'paused' && <button type="button" onClick={resumeSession}>Resume</button>}
+      </div>
+
+      {errorText && <div className="error">{errorText}</div>}
+    </RoomFrame>
+  );
 }
 
 function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: () => void }) {
@@ -154,6 +635,7 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
   function logCompletionOnce() {
     if (completed) return;
     setCompleted(true);
+    playerRef.current?.pauseVideo?.();
     onComplete();
   }
 
@@ -164,9 +646,16 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
     loadYouTubeApi().then((YT) => {
       if (cancelled || !containerRef.current) return;
       playerRef.current = new YT.Player(containerRef.current, {
+        width: '100%',
+        height: '100%',
         videoId: item.youtubeId,
-        playerVars: { playsinline: 1, rel: 0 },
+        // No user control at all — no scrub bar, no click-to-pause (that's
+        // also why the iframe has pointer-events:none in CSS), no keyboard
+        // shortcuts. Starts itself; the only way to stop it early is
+        // Mark Complete, which explicitly calls pauseVideo() above.
+        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, modestbranding: 1, autoplay: 1 },
         events: {
+          onReady: (event: any) => event.target.playVideo(),
           onStateChange: (event: any) => {
             if (event.data === YT.PlayerState.ENDED) logCompletionOnce();
           }

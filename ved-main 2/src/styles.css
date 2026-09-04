@@ -517,6 +517,31 @@ button:focus-visible {
   background: rgba(255, 255, 255, .2);
 }
 
+/* ── Meditation Video ──────────────────────────────────────────── */
+.meditation-video-wrap {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 18px 0;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(50, 23, 14, .28);
+}
+
+.meditation-video-wrap > div,
+.meditation-video-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* No scrubbing, no click-to-pause, no drag-seek — Mark Complete is the only
+   way to stop the video early. controls:0/disablekb:1 (set on the player
+   itself) hide the UI, but the iframe still eats clicks/taps to toggle
+   play/pause unless pointer events are blocked outright here too. */
+.meditation-video-wrap iframe {
+  pointer-events: none;
+}
+
 /* ── Breath Stage (Meditation Rooms) ───────────────────────────── */
 .breath-stage {
   display: grid;
@@ -703,4 +728,123 @@ button:focus-visible {
   margin-top: 2px;
   font-size: .74rem;
   color: var(--muted);
+}
+
+/* ── Vyas Mantra Room ──────────────────────────────────────────── */
+.vyas-figure {
+  max-width: 220px;
+  margin: 14px auto 6px;
+}
+
+.vyas-figure img {
+  display: block;
+  width: 100%;
+  border-radius: 16px;
+  filter: drop-shadow(0 10px 24px rgba(50, 23, 14, .28));
+}
+
+.vyas-video-wrap {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(50, 23, 14, .28);
+}
+
+.vyas-video-wrap > div,
+.vyas-video-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.vyas-status {
+  min-height: 1.1em;
+  margin: 0 0 14px;
+  color: rgba(255, 255, 255, .78);
+  font-style: italic;
+  font-size: .84rem;
+  text-align: center;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  color: rgba(255, 255, 255, .82);
+  font-size: .82rem;
+  cursor: pointer;
+  transition: background .16s;
+}
+
+.mode-btn.active {
+  background: #fff;
+  border-color: #fff;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.mode-btn:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.target-count-label {
+  display: block;
+  max-width: 200px;
+  margin: 0 auto 14px;
+  color: rgba(255, 255, 255, .72);
+  font-size: .78rem;
+  text-align: left;
+}
+
+.target-count-label input[type="number"] {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .12);
+  color: #fff;
+  font: inherit;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.session-counter-wrap {
+  margin: 6px 0 16px;
+  text-align: center;
+}
+
+.session-counter {
+  font-size: 3.2rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
+
+.session-counter-label {
+  margin: 4px 0 0;
+  color: rgba(255, 255, 255, .72);
+  font-size: .8rem;
+}
+
+.error {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .18);
+  color: #fff;
+  font-size: .82rem;
+  text-align: left;
 }
