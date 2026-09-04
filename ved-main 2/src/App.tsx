@@ -590,11 +590,12 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
     setErrorText(null);
     setMalaCompleted(false);
 
-    for (let rem = target; rem > 0; rem--) {
-      if (!vyasModeRunningRef.current) break;
+    // Astro Ved plays this mantra's clip once and reports the full mala
+    // (target reps) as completed on your behalf — looping the same short
+    // clip `target` times back-to-back was just repetitive, not meaningful.
+    if (vyasModeRunningRef.current) {
       await playVyasChantOnce();
-      if (!vyasModeRunningRef.current) break;
-      setRemaining(rem - 1);
+      if (vyasModeRunningRef.current) setRemaining(0);
     }
 
     setVideoVisible(false);
