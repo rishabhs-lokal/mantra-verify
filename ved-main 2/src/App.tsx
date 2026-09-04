@@ -1,65 +1,51 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Check, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
 import { vedApi } from './api';
 import { practices, preferences } from './data';
-import type { FlowType, PracticeCard, Screen } from './types';
+import type { FlowType, OfferingStats, PracticeCard } from './types';
+import { useBackNavigation } from './useBackNavigation';
+import { getUserId } from './uid';
+import { loadYouTubeApi } from './youtube';
 
-const prompts = [
-  'Main shant hoon.',
-  'Main kaafi hoon.',
-  'Main apne aap par bharosa karta hoon.',
-  'Aaj main gratitude choose karta hoon.'
-];
+const emptyStats: OfferingStats = { ok: false, is_new_user: true, counts_30d: {}, recently_used_item_id: null };
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('home');
-  const [flow, setFlow] = useState<FlowType | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [count, setCount] = useState(0);
-  const [promptIndex, setPromptIndex] = useState(0);
   const [toast, setToast] = useState('');
+  const [stats, setStats] = useState<OfferingStats>(emptyStats);
+
+  const userId = useMemo(() => getUserId(), []);
+  const { screen, flow, selectedId, count, setCount, navigate, goBack } = useBackNavigation(setToast);
 
   const selected = useMemo(
     () => flow && selectedId ? practices[flow].find((item) => item.id === selectedId) ?? null : null,
     [flow, selectedId]
   );
 
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 1800);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
-  function goHome() {
-    setScreen('home'); setFlow(null); setSelectedId(null); setCount(0);
-  }
-
-  function goBack() {
-    if (screen === 'room') { setScreen('choices'); setSelectedId(null); setCount(0); return; }
-    if (screen === 'choices') { setScreen('preferences'); setFlow(null); return; }
-    goHome();
+  function openPreferences() {
+    navigate({ screen: 'preferences', flow: null, selectedId: null, count: 0 });
   }
 
   function chooseFlow(type: FlowType) {
-    setFlow(type); setScreen('choices');
+    navigate({ screen: 'choices', flow: type, selectedId: null, count: 0 });
+    void vedApi.getStats(type, userId).then(setStats);
   }
 
   function enterRoom(item: PracticeCard) {
     if (!flow) return;
-    setSelectedId(item.id); setCount(0); setScreen('room');
-    void vedApi.start({ type: flow, item_id: item.id, count: 0 });
+    navigate({ screen: 'room', flow, selectedId: item.id, count: 0 });
+    void vedApi.start({ type: flow, item_id: item.id, count: 0, user_id: userId });
   }
 
   function addCount() {
     if (!flow || !selectedId) return;
     const next = count + 1;
     setCount(next);
-    if (next % 9 === 0) void vedApi.progress({ type: flow, item_id: selectedId, count: next });
+    if (next % 9 === 0) void vedApi.progress({ type: flow, item_id: selectedId, count: next, user_id: userId });
   }
 
   function complete() {
     if (!flow || !selectedId) return;
-    void vedApi.complete({ type: flow, item_id: selectedId, count });
+    void vedApi.complete({ type: flow, item_id: selectedId, count, user_id: userId });
     setToast('Practice complete · Shubh din ✦');
   }
 
@@ -67,12 +53,12 @@ function App() {
     <main className="app-shell">
       <Topbar showBack={screen !== 'home'} onBack={goBack} />
       <div className="page-transition" key={screen + (selectedId ?? '')}>
-        {screen === 'home' && <Home onOpen={() => setScreen('preferences')} />}
+        {screen === 'home' && <Home onOpen={openPreferences} />}
         {screen === 'preferences' && <Preferences onChoose={chooseFlow} />}
-        {screen === 'choices' && flow && <Choices flow={flow} onChoose={enterRoom} />}
+        {screen === 'choices' && flow && <Choices flow={flow} stats={stats} onChoose={enterRoom} />}
         {screen === 'room' && flow && selected && (
           flow === 'meditation'
-            ? <MeditationRoom item={selected} promptIndex={promptIndex} onNextPrompt={() => setPromptIndex((value) => (value + 1) % prompts.length)} />
+            ? <MeditationRoom item={selected} onComplete={complete} />
             : <MantraRoom flow={flow} item={selected} count={count} onCount={addCount} onReset={() => setCount(0)} onComplete={complete} />
         )}
       </div>
@@ -94,7 +80,6 @@ function Home({ onOpen }: { onOpen: () => void }) {
   return <>
     <button className="hero-banner" type="button" onClick={onOpen}>
       <span className="hero-copy">
-        
         <strong>Roz thoda sa sukoon.</strong>
         <span className="hero-sub">Mantra, meditation aur samadhan </span>
         <span className="hero-action">Apni practice chunein <i><ChevronRight size={18} /></i></span>
@@ -109,7 +94,7 @@ function Preferences({ onChoose }: { onChoose: (type: FlowType) => void }) {
   return <>
     <PageHead eyebrow="Choose your path" title="Aaj aapko kya chahiye?" description="Ek option chunein — phir themed card se seedha apne room mein jaayein." />
     <section className="preference-grid">
-      {preferences.map((item, index) => {
+      {preferences.map((item) => {
         const Icon = item.icon;
         return <button className="pref-card" type="button" key={item.id} onClick={() => onChoose(item.id)}>
           <span className="pref-icon"><Icon size={24} /></span>
@@ -121,21 +106,28 @@ function Preferences({ onChoose }: { onChoose: (type: FlowType) => void }) {
   </>;
 }
 
-function Choices({ flow, onChoose }: { flow: FlowType; onChoose: (item: PracticeCard) => void }) {
+function Choices({ flow, stats, onChoose }: { flow: FlowType; stats: OfferingStats; onChoose: (item: PracticeCard) => void }) {
   const headings = {
     mantra: ['Mantra Chant', 'Kaunsa mantra aaj aapke saath chalega?', '4 canonical mantras'],
     meditation: ['Meditation', 'Apne mood ke hisaab se practice chunein.', '4 mindful practices'],
     samadhan: ['Mantra Samadhan', 'Kis baat ka samadhan dhoondh rahe hain?', 'Choose what feels closest']
   } satisfies Record<FlowType, [string, string, string]>;
   const [eyebrow, title, description] = headings[flow];
+
+  const showUsage = !stats.is_new_user;
+
   return <>
     <PageHead eyebrow={eyebrow} title={title} description={`${description} — card par tap karte hi room shuru ho jayega.`} />
     <section className="choice-grid">
       {practices[flow].map((item) => {
         const Icon = item.icon;
+        const usedCount = stats.counts_30d[item.id] ?? 0;
+        const isRecent = showUsage && stats.recently_used_item_id === item.id;
         return <button className="choice-card" type="button" key={item.id} onClick={() => onChoose(item)} style={{ borderColor: `${item.theme.accent}22` }}>
+          {isRecent && <span className="recently-used-tag">Recently Used</span>}
           <span className="choice-icon" style={{ background: `linear-gradient(135deg, ${item.theme.dark}, ${item.theme.accent})` }}><Icon size={22} /></span>
           <span className="choice-copy"><h2>{item.label}</h2><p>{item.description}</p></span>
+          {showUsage && usedCount > 0 && <span className="usage-streak">Used {usedCount} times in the last 30 days</span>}
         </button>;
       })}
     </section>
@@ -154,13 +146,56 @@ function MantraRoom({ flow, item, count, onCount, onReset, onComplete }: { flow:
   </RoomFrame>;
 }
 
-function MeditationRoom({ item, promptIndex, onNextPrompt }: { item: PracticeCard; promptIndex: number; onNextPrompt: () => void }) {
+function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: () => void }) {
+  const [completed, setCompleted] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
+
+  function logCompletionOnce() {
+    if (completed) return;
+    setCompleted(true);
+    onComplete();
+  }
+
+  useEffect(() => {
+    if (!item.youtubeId || !containerRef.current) return;
+    let cancelled = false;
+
+    loadYouTubeApi().then((YT) => {
+      if (cancelled || !containerRef.current) return;
+      playerRef.current = new YT.Player(containerRef.current, {
+        videoId: item.youtubeId,
+        playerVars: { playsinline: 1, rel: 0 },
+        events: {
+          onStateChange: (event: any) => {
+            if (event.data === YT.PlayerState.ENDED) logCompletionOnce();
+          }
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (playerRef.current && playerRef.current.destroy) playerRef.current.destroy();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  if (!item.youtubeId) {
+    return <RoomFrame item={item}>
+      <span className="room-kicker">Meditation Room</span><h1>{item.label}</h1>
+      <p className="room-desc">Video coming soon for this practice.</p>
+    </RoomFrame>;
+  }
+
   return <RoomFrame item={item}>
     <span className="room-kicker">Meditation Room</span><h1>{item.label}</h1>
-    {item.id === 'vagus' && <><div className="breath-stage"><div className="wave">{Array.from({ length: 7 }).map((_, index) => <i key={index} />)}</div></div><p className="room-desc">Wave upar jaaye toh inhale, neeche aaye toh exhale.</p></>}
-    {item.id === 'guided' && <><div className="breath-stage"><div className="breath-orb"><span>◉</span></div></div><p className="room-desc">Mere saath: dheere inhale… hold… aur gently exhale.</p></>}
-    {item.id === 'affirmation' && <><div className="breath-stage"><div><div className="prompt">{prompts[promptIndex]}</div><div className="prompt-dots">{prompts.map((_, index) => <i key={index} className={index === promptIndex ? 'active' : ''} />)}</div></div></div><div className="room-actions"><button type="button" onClick={onNextPrompt}>Next prompt <ChevronRight size={16} /></button></div></>}
-    {item.id === 'box' && <><div className="breath-stage"><div className="breath-orb box-breath"><span>4 · 4 · 4 · 4</span></div></div><p className="room-desc">Inhale · Hold · Exhale · Hold — har step 4 counts.</p></>}
+    <div className="meditation-video-wrap"><div ref={containerRef} /></div>
+    <div className="room-actions">
+      <button type="button" onClick={logCompletionOnce} disabled={completed}>
+        <Check size={16} /> {completed ? 'Completed' : 'Mark Complete'}
+      </button>
+    </div>
   </RoomFrame>;
 }
 

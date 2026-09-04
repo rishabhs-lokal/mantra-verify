@@ -1,5 +1,4 @@
 import {
-  GiLotusFlower,
   GiPrayerBeads,
   GiHealing,
   GiTrident,
@@ -8,7 +7,8 @@ import {
   GiLion,
   GiMeditation,
   GiHearts,
-  GiYinYang
+  GiYinYang,
+  GiLotusFlower
 } from 'react-icons/gi';
 import {
   TbWind,
@@ -33,10 +33,10 @@ export const practices: Record<FlowType, PracticeCard[]> = {
     { id: 'durga', label: 'Jai Maa Durga', description: 'Shakti de aur negativity se raksha kare.', icon: GiLion, theme: { dark: '#64112A', accent: '#D63B37' } }
   ],
   meditation: [
-    { id: 'vagus', label: 'Vagus Breathing', description: 'Visual rhythm ke saath nervous system ko calm karein.', icon: TbWind, theme: { dark: '#173D46', accent: '#36A6A0' } },
+    { id: 'vagus', label: '4-7-8 Breathing', description: '4 seconds inhale, 7 hold, 8 exhale — nervous system ko turant calm karein.', icon: TbWind, theme: { dark: '#173D46', accent: '#36A6A0' }, youtubeId: 'mBISVBg0zKw' },
     { id: 'guided', label: 'Guided Meditation', description: 'Ek gentle guide ke saath step-by-step breathe karein.', icon: GiMeditation, theme: { dark: '#3D235C', accent: '#8F5CC4' } },
     { id: 'affirmation', label: 'Affirmation & Prompts', description: 'Positive prompts ko dekhein, bolein aur feel karein.', icon: TbSparkles, theme: { dark: '#712748', accent: '#D56588' } },
-    { id: 'box', label: 'Box Breathing', description: 'Growing box ko follow karke breathing balance karein.', icon: TbBox, theme: { dark: '#173967', accent: '#488BD5' } }
+    { id: 'box', label: 'Box Breathing', description: 'Growing box ko follow karke breathing balance karein.', icon: TbBox, theme: { dark: '#173967', accent: '#488BD5' }, youtubeId: 'PUT_BOX_BREATHING_YOUTUBE_ID_HERE' }
   ],
   samadhan: [
     { id: 'love', label: 'Love', description: 'Rishton aur emotions mein clarity ke liye.', icon: GiHearts, mantra: 'Om Namah Shivaya', theme: { dark: '#711F39', accent: '#DF5571' } },

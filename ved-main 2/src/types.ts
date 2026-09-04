@@ -17,10 +17,19 @@ export interface PracticeCard {
   icon: IconComponent;
   theme: Theme;
   mantra?: string;
+  youtubeId?: string;
 }
 
 export interface SessionPayload {
   type: FlowType;
   item_id: string;
   count: number;
+  user_id: string;
+}
+
+export interface OfferingStats {
+  ok: boolean;
+  is_new_user: boolean;
+  counts_30d: Record<string, number>;
+  recently_used_item_id: string | null;
 }

@@ -682,3 +682,25 @@ button:focus-visible {
     transition-duration: .01ms !important;
   }
 }
+
+/* ── Usage streak + Recently Used tag ─────────────────────────── */
+.recently-used-tag {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: var(--orange);
+  background: #fff0e8;
+  border: 1px solid var(--line);
+}
+
+.usage-streak {
+  display: block;
+  margin-top: 2px;
+  font-size: .74rem;
+  color: var(--muted);
+}
