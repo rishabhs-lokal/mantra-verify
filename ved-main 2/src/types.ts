@@ -3,7 +3,7 @@ import type { ComponentType } from 'react';
 export type IconComponent = ComponentType<{ size?: number | string; className?: string }>;
 
 export type FlowType = 'mantra' | 'meditation' | 'samadhan';
-export type Screen = 'home' | 'preferences' | 'choices' | 'chat' | 'mantraPath' | 'expert' | 'room';
+export type Screen = 'preferences' | 'choices' | 'chat' | 'mantraPath' | 'expert' | 'room';
 
 export interface Theme {
   dark: string;
