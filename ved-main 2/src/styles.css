@@ -1009,15 +1009,21 @@ button:focus-visible {
 }
 
 .vyas-video-wrap > div,
-.vyas-video-wrap iframe {
+.vyas-video-wrap iframe,
+.vyas-video-wrap video {
   width: 100%;
   height: 100%;
   border: 0;
 }
 
+.vyas-video-wrap video {
+  object-fit: cover;
+}
+
 /* No scrubbing, no click-to-pause, no drag-seek on either video — Vyas
    (or the guided practice) stays in control, not the viewer. */
-.vyas-video-wrap iframe {
+.vyas-video-wrap iframe,
+.vyas-video-wrap video {
   pointer-events: none;
 }
 

@@ -8,6 +8,7 @@ import type { FlowType, OfferingStats, PracticeCard, Screen } from './types';
 import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
 import { vyasMantraConfig } from './vyasMantras';
+import { vyasChantClipConfig } from './vyasChantClips';
 import { meditationVideoConfig } from './meditationVideos';
 import { API_BASE } from './apiBase';
 
@@ -21,6 +22,7 @@ const VYAS_SESSION_PAUSE_MS = 10000;
 const VYAS_POLL_INTERVAL_MS = 75;
 const VYAS_ERROR_STREAK_LIMIT = 3;
 const VYAS_FREE_CHANTS_AT_START = 3;
+const EXPERT_INTRO_REPS = 3;
 
 type VyasMode = 'user' | 'vyas';
 type VyasPhase = 'idle' | 'running' | 'paused';
@@ -439,14 +441,47 @@ function ChantConnectingSheet({ mantra }: { mantra: string }) {
 
 function ExpertIntro({ item, step, onNext }: { item: PracticeCard; step: number; onNext: () => void }) {
   const mantraText = item.mantra ?? item.label;
+  // Samadhan cards give the mantra by label (item.mantra); the direct
+  // Mantra Chant picker gives it by id (item.id is already the mantra id)
+  // — resolve to an id either way so the right clip plays for both paths.
+  const mantraId = practices.mantra.find((m) => m.label === mantraText)?.id ?? item.id;
+  const clip = vyasChantClipConfig[mantraId] ?? null;
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const playedStepRef = useRef(-1);
+
+  useEffect(() => {
+    if (!clip || !videoRef.current || playedStepRef.current === step) return;
+    playedStepRef.current = step;
+    setAutoplayBlocked(false);
+    const videoEl = videoRef.current;
+    videoEl.src = clip.videoSrc;
+    videoEl.currentTime = 0;
+    // Autoplay-with-sound only reliably works this soon after a user gesture
+    // (the click that navigated here) — if the browser blocks it anyway,
+    // fall back to the old manual "Maine sun liya" button rather than
+    // stranding the user on a silent, frozen video.
+    videoEl.play().catch(() => setAutoplayBlocked(true));
+  }, [step, clip]);
+
+  useEffect(() => () => videoRef.current?.pause(), []);
+
   return <RoomFrame item={item}>
     <span className="room-kicker">Expert Aapko Mantra Sunayenge</span>
     <h1>{mantraText}</h1>
-    <p className="room-desc">Dhyan se sunein — expert yeh mantra 3 baar bolenge.</p>
-    <div className="expert-dots">{Array.from({ length: 3 }).map((_, index) => <i key={index} className={index <= step ? 'active' : ''} />)}</div>
-    <div className="room-actions">
-      <button type="button" onClick={onNext}><Check size={16} /> Maine sun liya ({step + 1}/3)</button>
+    <p className="room-desc">Dhyan se sunein — expert yeh mantra {EXPERT_INTRO_REPS} baar bolenge.</p>
+    <div className="vyas-figure">
+      {clip
+        ? <div className="vyas-video-wrap"><video ref={videoRef} playsInline onEnded={onNext} /></div>
+        : <img src="/vyas-portrait.png" alt="Vyas" />}
     </div>
+    <div className="expert-dots">{Array.from({ length: EXPERT_INTRO_REPS }).map((_, index) => <i key={index} className={index <= step ? 'active' : ''} />)}</div>
+    {(!clip || autoplayBlocked) && (
+      <div className="room-actions">
+        <button type="button" onClick={onNext}><Check size={16} /> Maine sun liya ({step + 1}/{EXPERT_INTRO_REPS})</button>
+      </div>
+    )}
   </RoomFrame>;
 }
 
@@ -465,6 +500,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
   const config = vyasMantraConfig[mantraId];
   const referenceText = config?.referenceText ?? item.label;
   const youtubeId = config?.youtubeId ?? null;
+  const chantClip = vyasChantClipConfig[mantraId] ?? null;
   const displayLabel = isSamadhan ? item.mantra ?? item.label : item.label;
   const roomKicker = isSamadhan ? `${item.label} · Aapka mantra samadhan` : 'Mantra Room · Vyas ke saath';
 
@@ -879,10 +915,20 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
       {isSamadhan && <span className="samadhan-note">Recommended for your selected category</span>}
 
       <div className="vyas-figure">
-        {!videoVisible && <img src="/vyas-portrait.png" alt="Vyas" />}
-        <div className="vyas-video-wrap" hidden={!videoVisible}>
-          <div ref={ytContainerRef} />
-        </div>
+        {mode === 'vyas' ? (
+          <>
+            {!videoVisible && <img src="/vyas-portrait.png" alt="Vyas" />}
+            <div className="vyas-video-wrap" hidden={!videoVisible}>
+              <div ref={ytContainerRef} />
+            </div>
+          </>
+        ) : (
+          // The expert-intro screen already played this mantra's chant clip
+          // 3 times before handing off here — this room shows a freeze-frame
+          // from that same clip instead of the generic portrait, so the face
+          // you were just watching doesn't visually reset.
+          <img src={chantClip?.stillSrc ?? '/vyas-portrait.png'} alt="Vyas" />
+        )}
       </div>
       <p className="vyas-status">{statusText || (phase === 'idle' ? 'Vyas is ready.' : '')}</p>
 
