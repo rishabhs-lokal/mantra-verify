@@ -12,3 +12,18 @@ services:
         sync: false
       - key: SHEETS_SHARED_SECRET
         sync: false
+
+  - type: web
+    name: ved-frontend
+    runtime: static
+    rootDir: ved-main 2
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      # Vite's dev-only "/api" proxy doesn't exist in the static build —
+      # this plays that role in production, forwarding to ved-backend.
+      # If Render assigns a different backend URL than this (e.g. the
+      # ved-backend name was taken), update the destination to match.
+      - type: rewrite
+        source: /api/*
+        destination: https://ved-backend.onrender.com/api/*
