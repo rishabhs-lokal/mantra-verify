@@ -14,6 +14,47 @@ the only two things on screen. You pick "You Chant" (mic listens
 continuously, verifies each repetition) or "Vyas Chants" (he leads, no
 verification), a count from 1–12, and press Start.
 
+## This is a module, not a standalone app
+
+`vyas/` is a proper, pip-installable Python package
+(`pyproject.toml`) exposing one thing: `router`, a FastAPI `APIRouter`.
+`main.py` at the repo root is **not** the module — it's a thin demo launcher
+that mounts `vyas.router` onto its own `FastAPI()` instance and serves the
+`static/` frontend, so the package can be run and tested standalone without
+a parent app.
+
+The actual integration target is **Ved** (`ved-main 2/`, a separate
+React + FastAPI app one directory over) — this package is meant to be
+mounted into `ved-main 2/backend/main.py`:
+
+```python
+from vyas import router as vyas_router
+app.include_router(vyas_router, prefix="/api/vyas")
+```
+
+This is already wired up and verified working — `ved-main 2/backend/main.py`
+includes it, and `ved-main 2/backend/requirements.txt` installs `vyas` via
+`-e ../..` (editable, pointing at this repo's root where `pyproject.toml`
+lives). Confirmed live: booting `uvicorn backend.main:app` from inside
+`ved-main 2/` correctly exposes every Vyas endpoint under `/api/vyas/*`
+alongside Ved's own existing `/api/session/*` routes, no conflicts.
+
+**Important**: `vyas` never calls `load_dotenv()` itself — only the
+standalone demo's `main.py` does, since it's the actual process entry
+point. When mounted into Ved's backend (or any other parent app),
+`OPENROUTER_API_KEY` must be set by *that* app's own environment setup —
+confirmed this fails cleanly (500, clear message, not a crash) if it
+isn't, rather than silently doing nothing.
+
+**What's mounted vs. what isn't**: the FastAPI routes (`vyas.router`) are a
+real, tested integration. The `static/` frontend (portrait, counter card,
+mode toggle, VAD listening) is the standalone demo's UI, not Ved's actual
+UI — Ved's own React frontend (`ved-main 2/src/`) still has its own
+`MantraRoom` component with a manual tap-to-count button, which does not
+yet call any Vyas endpoint. Wiring Ved's React UI to actually use
+`/api/vyas/verify_chant` etc. (replacing or augmenting the tap button with
+real voice verification) is the natural next step, not done here.
+
 ## Setup
 
 ```bash
@@ -57,7 +98,7 @@ Multipart form:
 | `session_id` | string | yes | Client-generated session identifier |
 | `mantra_id` | string | yes | Identifier for the mantra being chanted |
 | `target_count` | int | no (default `108`) | Repetitions target for `mala_complete` |
-| `language` | string | no (default `hi`) | Whisper language hint — see `vyas.LANGUAGE_NAMES` for the full supported set |
+| `language` | string | no (default `hi`) | Whisper language hint — see `vyas.persona.LANGUAGE_NAMES` for the full supported set |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/verify \
@@ -69,8 +110,8 @@ curl -X POST http://127.0.0.1:8000/verify \
   -F "language=hi"
 ```
 
-Every `/verify` call (pass or fail) is also logged to `data/history.json` via
-`history.py`, so Vyas's chat replies can reference real past attempts —
+Every `/verify` call (pass or fail) is also logged to `vyas/data/history.json` via
+`vyas/history.py`, so Vyas's chat replies can reference real past attempts —
 score, pass/fail, completion ratio, and timestamp — not just the current one.
 
 Response fields are ordered `score`, `completion_ratio`, `passed`, `count`,
@@ -99,7 +140,7 @@ one, the same way `PASS_THRESHOLD` may eventually need to vary by mantra
 (see below).
 
 A verification only increments `count` when `score >= 82.0`
-(`matcher.PASS_THRESHOLD`) — `completion_ratio` does not currently affect
+(`vyas.matcher.PASS_THRESHOLD`) — `completion_ratio` does not currently affect
 `passed` or the counter, it's informational only.
 
 **Error responses** — `/verify` returns clear errors instead of crashing:
@@ -116,13 +157,13 @@ Same form fields as `/verify`. Use this when one recording covers several
 repetitions of the mantra back-to-back (e.g. "say it 11 times, then stop"),
 instead of one recording per repetition.
 
-`matcher.count_repetitions()` finds how many times the mantra appears in the
+`vyas.matcher.count_repetitions()` finds how many times the mantra appears in the
 transcript using a **character-level** sliding window (not word-level) —
 live testing found Whisper fuses words together with no spaces at all on
 rapid, monotonous repeated speech (`"ओम्नमहशिवाय"` instead of
 `"ओम् नमः शिवाय"`), which breaks a word-count window completely. All
 detected repetitions are added to the counter in one call via
-`counter.increment_by()`.
+`vyas.counter.increment_by()`.
 
 Response adds `detected_repetitions` and `segments` (each with `text` and
 `score`) in place of `/verify`'s `score`/`passed`/`word_diff`/etc. — same
@@ -195,7 +236,7 @@ listening, not an error, unlike `/verify`'s 422 on the same condition.
 
 Response: `{counted, repetitions_counted, decision_source, score, transcript, count, target_count, remaining, mala_complete, last_verified_at}`.
 `repetitions_counted` (not just `counted`) is what gets added to the
-persistent session+mantra counter via `counter.increment_by()`.
+persistent session+mantra counter via `vyas.counter.increment_by()`.
 
 Transcribes with `LIVE_TRANSCRIPTION_MODEL`
 (`openai/whisper-large-v3-turbo`) rather than the standard
@@ -249,19 +290,19 @@ for testing directly, or if a chat surface comes back later.
 
 JSON body: `{"session_id": "...", "message": "...", "language": "hi"}`.
 
-Sends the message to a chat model (`vyas.CHAT_MODEL`, `openai/gpt-4o-mini` by
+Sends the message to a chat model (`vyas.persona.CHAT_MODEL`, `openai/gpt-4o-mini` by
 default — a different model from Whisper, since transcription and
 conversation are different tasks) via OpenRouter, with a system prompt that
 establishes Vyas's persona and includes a summary of the last 5 `/verify`
-attempts logged for that `session_id` from `history.py`. Returns
+attempts logged for that `session_id` from `vyas/history.py`. Returns
 `{"reply": "...", "language": "hi"}`. `language` must be one of the codes in
-`vyas.LANGUAGE_NAMES` (the same Devanagari-adjacent language set `/verify`
+`vyas.persona.LANGUAGE_NAMES` (the same Devanagari-adjacent language set `/verify`
 transcribes) — a 400 otherwise.
 
 ### `POST /speak`
 
 JSON body: `{"text": "..."}`. Sends the text to OpenRouter's TTS endpoint
-(`vyas.TTS_MODEL`, `google/gemini-3.1-flash-tts-preview`) and returns
+(`vyas.persona.TTS_MODEL`, `google/gemini-3.1-flash-tts-preview`) and returns
 `audio/wav` bytes (not JSON) — the frontend plays this directly. `/chat` and
 `/speak` are deliberately separate calls rather than one combined endpoint,
 so the frontend can show Vyas's text reply immediately without waiting on
@@ -272,14 +313,14 @@ Note: OpenRouter's own docs reference an OpenAI TTS model
 (`openai/gpt-4o-mini-tts-...`) that does not actually exist on the platform —
 confirmed by querying the live `/api/v1/models?output_modalities=speech`
 catalog, which has no OpenAI entries at all. Gemini's TTS is used instead.
-It only outputs raw PCM (no mp3/wav option), so `vyas.synthesize_speech`
-wraps it in a WAV header (`vyas._pcm_to_wav`) before returning it — a plain
+It only outputs raw PCM (no mp3/wav option), so `vyas.persona.synthesize_speech`
+wraps it in a WAV header (`vyas.persona._pcm_to_wav`) before returning it — a plain
 `<audio>` tag can't play headerless PCM directly.
 
 **Error responses on `/chat` and `/speak`** follow the same convention as
 `/verify`: `429` (rate limit), `502` (key rejected or other OpenRouter
 error), `504` (timeout), `500` (`OPENROUTER_API_KEY` not set). This mapping
-lives in `openrouter_client.py`, shared by all three OpenRouter call sites
+lives in `vyas/openrouter_client.py`, shared by all three OpenRouter call sites
 (`/verify`, `/chat`, `/speak`) instead of being duplicated per endpoint.
 
 ## Vyas's portrait
@@ -309,6 +350,17 @@ just Vyas's portrait and this card. The mantra, mantra id, and language are
 now hardcoded constants at the top of `app.js`
 (`REFERENCE_TEXT`/`MANTRA_ID`/`LANGUAGE`) — change them there if you need a
 different mantra; there's currently no UI for switching at runtime.
+
+**This hardcoding is a demo-frontend limitation, not a module limitation.**
+`vyas.router`'s endpoints (`/verify`, `/verify_chant`, `/verify_batch`) all
+take `reference_text`/`mantra_id`/`language` as per-request form fields —
+the backend is already mantra-agnostic. Ved needs this: `ved-main 2/src/data.ts`
+defines 4 mantras (Om Namah Shivaya, Om Shri Hanumate Namah, Jai Shri Ram,
+Jai Maa Durga), not the one this demo hardcodes. A real integration into
+Ved's React UI would pass whichever mantra the user picked from that list
+as `reference_text`/`mantra_id` in each request — no backend changes
+needed, just a frontend that doesn't hardcode a single mantra like this
+demo's `app.js` does.
 
 ### Vyas Chants mode
 
@@ -414,7 +466,7 @@ a much lower-resource language in Whisper's training data than Hindi, so
 `language="hi"` is the default here as a likely-more-accurate stand-in for
 Devanagari mantra chanting, not because `sa` doesn't exist. Pass a different
 `language` value per-request (on `/verify`) to compare the two yourself —
-see `vyas.LANGUAGE_NAMES` for the full set this app recognizes.
+see `vyas.persona.LANGUAGE_NAMES` for the full set this app recognizes.
 
 **Known gap, found via live testing**: Whisper often transcribes the ॐ
 symbol (U+0950) as the phonetically-spelled-out ओम (two characters) instead
@@ -431,11 +483,11 @@ should go, not an obvious bug fix.
 rather than real mismatches, before scoring or diffing: avagraha (ऽ) and
 nukta (़) are stripped, chandrabindu (ँ) is folded into anusvara (ं), and both
 ASCII and Devanagari punctuation (। ॥) are removed. See the comments in
-`matcher.py` for the reasoning behind each.
+`vyas/matcher.py` for the reasoning behind each.
 
 ## Tuning the pass threshold
 
-`PASS_THRESHOLD = 82.0` in `matcher.py` is a starting point, not a measured
+`PASS_THRESHOLD = 82.0` in `vyas/matcher.py` is a starting point, not a measured
 value. Once you have real recordings:
 
 1. Collect a batch of clips you'd call "clearly correct" and a batch you'd
@@ -462,5 +514,5 @@ value. Once you have real recordings:
 pytest
 ```
 
-Covers `matcher.py`'s normalization, scoring, and word-diff logic. There's no
-mock-OpenRouter test for `main.py` yet — worth adding if this goes further.
+Covers `vyas/matcher.py`'s normalization, scoring, and word-diff logic. There's no
+mock-OpenRouter test for the routes yet — worth adding if this goes further.

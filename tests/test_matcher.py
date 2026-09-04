@@ -2,7 +2,7 @@ import unicodedata
 
 import pytest
 
-from matcher import (
+from vyas.matcher import (
     LIVE_CHANT_THRESHOLD,
     PASS_THRESHOLD,
     REPETITION_MATCH_THRESHOLD,

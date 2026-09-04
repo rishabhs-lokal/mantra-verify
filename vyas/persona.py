@@ -14,8 +14,8 @@ doesn't actually exist there). Using Gemini's TTS instead, which does.
 import io
 import wave
 
-from openrouter_client import post as openrouter_post
-from openrouter_client import require_api_key
+from .openrouter_client import post as openrouter_post
+from .openrouter_client import require_api_key
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech"

@@ -1,2 +1,7 @@
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
+
+# The vyas module (voice-verified mantra japa counting) — editable install
+# from the repo root, where its pyproject.toml lives (two directories up
+# from this file: backend/ -> ved-main 2/ -> repo root).
+-e ../..
