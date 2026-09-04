@@ -490,6 +490,405 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
+/* ── Jaap Target ───────────────────────────────────────────────── */
+.jaap-target {
+  font-style: normal;
+  font-size: 1.3rem;
+  opacity: .7;
+}
+
+/* ── Samadhan Chat (messaging-app style) ──────────────────────────*/
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 150px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 14px 45px rgba(99, 41, 17, .1);
+}
+
+.chat-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.chat-avatar-lg {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .15);
+}
+
+.chat-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-header-copy b {
+  font-size: .95rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.chat-header-copy small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.chat-thread {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 14px;
+  overflow-y: auto;
+  background: #f2f1f4;
+}
+
+.chat-date-pill {
+  align-self: center;
+  margin-bottom: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(50, 23, 14, .07);
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 650;
+}
+
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+  margin-bottom: 12px;
+}
+
+.chat-row.bot {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.chat-row.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-bubble {
+  padding: 11px 14px;
+  border-radius: 18px;
+  font-size: .88rem;
+  line-height: 1.5;
+}
+
+.chat-bubble.bot {
+  background: #e9e9ee;
+  color: var(--ink);
+}
+
+.chat-bubble.user {
+  background: #fbe0dc;
+  color: #5a2a22;
+}
+
+.chat-time {
+  margin-top: 4px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.chat-typing {
+  display: flex;
+  gap: 4px;
+  padding: 14px 16px;
+}
+
+.chat-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: chatTyping 1.1s infinite ease-in-out;
+}
+
+.chat-typing i:nth-child(2) { animation-delay: .15s; }
+.chat-typing i:nth-child(3) { animation-delay: .3s; }
+
+@keyframes chatTyping {
+  0%, 60%, 100% { transform: translateY(0); opacity: .4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.chat-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.chat-option-card {
+  display: block;
+  width: 100%;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .16s ease, background .16s ease;
+}
+
+.chat-option-card:active {
+  transform: scale(.98);
+  background: #fff8f4;
+}
+
+.chat-option-card:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.chat-option-card b {
+  display: block;
+  font-size: .92rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.chat-option-mantra {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #fff0e8;
+  color: #d83f09;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.chat-option-card small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.chat-input-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7f6f4;
+  color: var(--ink);
+  font: inherit;
+  font-size: .9rem;
+}
+
+.chat-input::placeholder {
+  color: var(--muted);
+}
+
+.chat-input:focus-visible {
+  outline: 2px solid rgba(244, 84, 26, .35);
+  outline-offset: 2px;
+}
+
+.chat-send {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity .16s;
+}
+
+.chat-send:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+/* ── Mode Grid (Mantra Chant: Solo vs Astro Ved) ──────────────────*/
+.mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 14px 45px rgba(99, 41, 17, .1);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.mode-card:active {
+  transform: scale(.97);
+  box-shadow: 0 8px 28px rgba(99, 41, 17, .12);
+}
+
+.mode-card:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.mode-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: var(--orange);
+  background: #fff0e8;
+}
+
+.mode-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-copy h2 {
+  margin: 0 0 6px;
+  font-family: 'Tiro Devanagari Hindi', serif;
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.mode-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: .86rem;
+  line-height: 1.45;
+}
+
+/* ── Connecting Sheet (module hand-off placeholder) ───────────────*/
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(50, 23, 14, .45);
+  animation: sheetFadeIn .2s ease both;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 460px;
+  padding: 28px 24px 34px;
+  border-radius: 24px 24px 0 0;
+  background: #fff;
+  text-align: center;
+  box-shadow: 0 -20px 60px rgba(50, 23, 14, .25);
+  animation: sheetSlideUp .3s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.sheet-spinner {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.sheet-spinner i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--orange);
+  animation: chatTyping 1s infinite ease-in-out;
+}
+
+.sheet-spinner i:nth-child(2) { animation-delay: .15s; }
+.sheet-spinner i:nth-child(3) { animation-delay: .3s; }
+
+.sheet p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+@keyframes sheetFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sheetSlideUp {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Expert Intro Dots ─────────────────────────────────────────── */
+.expert-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 24px 0 6px;
+}
+
+.expert-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .3);
+  transition: background .25s, transform .25s;
+}
+
+.expert-dots i.active {
+  background: #fff;
+  transform: scale(1.15);
+}
+
 /* ── Room Actions ──────────────────────────────────────────────── */
 .room-actions {
   display: flex;
@@ -515,6 +914,16 @@ button:focus-visible {
 
 .room-actions button:active {
   background: rgba(255, 255, 255, .2);
+}
+
+.room-actions button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.room-actions button:disabled:active {
+  transform: none;
+  background: rgba(255, 255, 255, .1);
 }
 
 /* ── Breath Stage (Meditation Rooms) ───────────────────────────── */
@@ -681,26 +1090,4 @@ button:focus-visible {
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
-}
-
-/* ── Usage streak + Recently Used tag ─────────────────────────── */
-.recently-used-tag {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: .68rem;
-  font-weight: 600;
-  letter-spacing: .01em;
-  color: var(--orange);
-  background: #fff0e8;
-  border: 1px solid var(--line);
-}
-
-.usage-streak {
-  display: block;
-  margin-top: 2px;
-  font-size: .74rem;
-  color: var(--muted);
 }
