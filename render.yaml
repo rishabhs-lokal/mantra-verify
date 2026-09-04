@@ -21,9 +21,8 @@ services:
     staticPublishPath: dist
     routes:
       # Vite's dev-only "/api" proxy doesn't exist in the static build —
-      # this plays that role in production, forwarding to ved-backend.
-      # If Render assigns a different backend URL than this (e.g. the
-      # ved-backend name was taken), update the destination to match.
+      # this plays that role in production, forwarding to the real
+      # deployed backend URL.
       - type: rewrite
         source: /api/*
-        destination: https://ved-backend.onrender.com/api/*
+        destination: https://mantra-verify-ngab.onrender.com/api/*
