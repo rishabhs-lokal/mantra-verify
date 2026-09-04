@@ -9,8 +9,9 @@ import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
 import { vyasMantraConfig } from './vyasMantras';
 import { meditationVideoConfig } from './meditationVideos';
+import { API_BASE } from './apiBase';
 
-const VYAS_API_BASE = '/api/vyas';
+const VYAS_API_BASE = `${API_BASE}/vyas`;
 const VYAS_LANGUAGE = 'hi';
 const VYAS_MAX_CHANTS = 12;
 const VYAS_SPEECH_RMS_THRESHOLD = 0.02;
@@ -944,7 +945,11 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
         width: '100%',
         height: '100%',
         videoId: youtubeId,
-        playerVars: { playsinline: 1, rel: 0, controls: 0, modestbranding: 1, loop: 1, playlist: youtubeId },
+        // disablekb (plus pointer-events:none in CSS on .vyas-video-wrap
+        // iframe) is what makes this genuinely un-controllable by the user
+        // rather than just visually hiding YouTube's own controls bar —
+        // was an explicit earlier requirement for the meditation video.
+        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, modestbranding: 1, loop: 1, playlist: youtubeId },
         events: { onReady: (event: any) => event.target.playVideo() }
       });
       ytPlayerRef.current = player;

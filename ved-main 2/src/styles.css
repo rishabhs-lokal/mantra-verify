@@ -1015,6 +1015,12 @@ button:focus-visible {
   border: 0;
 }
 
+/* No scrubbing, no click-to-pause, no drag-seek on either video — Vyas
+   (or the guided practice) stays in control, not the viewer. */
+.vyas-video-wrap iframe {
+  pointer-events: none;
+}
+
 .vyas-status {
   min-height: 1.1em;
   margin: 0 0 14px;
