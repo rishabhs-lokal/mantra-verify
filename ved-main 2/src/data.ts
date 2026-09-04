@@ -19,6 +19,11 @@ import {
 } from 'react-icons/tb';
 import type { FlowType, PracticeCard } from './types';
 
+// Fixed jaap count for the "Solo Mantra Chant" / "Astro Ved" handoff paths
+// (via Samadhan chat or the direct Mantra Chant picker) — matches the max
+// chant count already used as the convention elsewhere in the Vyas room.
+export const SOLO_JAAP_TARGET = 12;
+
 export const preferences = [
   { id: 'meditation' as FlowType, label: 'Meditation', description: 'Saans, stillness aur mindful guidance.', icon: GiLotusFlower },
   { id: 'mantra' as FlowType, label: 'Mantra Chant', description: 'Apna mantra chunein aur seedha jaap shuru karein.', icon: GiPrayerBeads },
@@ -33,10 +38,10 @@ export const practices: Record<FlowType, PracticeCard[]> = {
     { id: 'durga', label: 'Jai Maa Durga', description: 'Shakti de aur negativity se raksha kare.', icon: GiLion, theme: { dark: '#64112A', accent: '#D63B37' } }
   ],
   meditation: [
-    { id: 'vagus', label: '4-7-8 Breathing', description: '4 seconds inhale, 7 hold, 8 exhale — nervous system ko turant calm karein.', icon: TbWind, theme: { dark: '#173D46', accent: '#36A6A0' }, youtubeId: 'mBISVBg0zKw' },
-    { id: 'guided', label: 'Guided Meditation', description: 'Ek gentle guide ke saath step-by-step breathe karein.', icon: GiMeditation, theme: { dark: '#3D235C', accent: '#8F5CC4' }, youtubeId: 'FHsO0xGcfkA' },
-    { id: 'affirmation', label: 'Manifestation Meditation', description: 'Apni ichchaon aur intentions par focus karke manifest karein.', icon: TbSparkles, theme: { dark: '#712748', accent: '#D56588' }, youtubeId: '3Q9McpoTwJE' },
-    { id: 'box', label: 'Box Breathing', description: 'Growing box ko follow karke breathing balance karein.', icon: TbBox, theme: { dark: '#173967', accent: '#488BD5' }, youtubeId: 'nj0jDKzxLwo' }
+    { id: 'vagus', label: '4-7-8 Breathing', description: '4 seconds inhale, 7 hold, 8 exhale — nervous system ko turant calm karein.', icon: TbWind, theme: { dark: '#173D46', accent: '#36A6A0' } },
+    { id: 'guided', label: 'Guided Meditation', description: 'Ek gentle guide ke saath step-by-step breathe karein.', icon: GiMeditation, theme: { dark: '#3D235C', accent: '#8F5CC4' } },
+    { id: 'affirmation', label: 'Manifestation Meditation', description: 'Apni ichchaon aur intentions par focus karke manifest karein.', icon: TbSparkles, theme: { dark: '#712748', accent: '#D56588' } },
+    { id: 'box', label: 'Box Breathing', description: 'Growing box ko follow karke breathing balance karein.', icon: TbBox, theme: { dark: '#173967', accent: '#488BD5' } }
   ],
   samadhan: [
     { id: 'love', label: 'Love', description: 'Rishton aur emotions mein clarity ke liye.', icon: GiHearts, mantra: 'Om Namah Shivaya', theme: { dark: '#711F39', accent: '#DF5571' } },

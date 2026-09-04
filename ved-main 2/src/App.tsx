@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Send, Sparkles, User, Users } from 'lucide-react';
 import { vedApi } from './api';
-import { practices, preferences } from './data';
-import type { FlowType, OfferingStats, PracticeCard } from './types';
-import { useBackNavigation } from './useBackNavigation';
+import { practices, preferences, SOLO_JAAP_TARGET } from './data';
+import { connectToChantModule } from './connector';
+import type { ChantMode } from './connector';
+import type { FlowType, OfferingStats, PracticeCard, Screen } from './types';
 import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
 import { vyasMantraConfig } from './vyasMantras';
+
+const prompts = [
+  'Main shant hoon.',
+  'Main kaafi hoon.',
+  'Main apne aap par bharosa karta hoon.',
+  'Aaj main gratitude choose karta hoon.'
+];
 
 const VYAS_API_BASE = '/api/vyas';
 const VYAS_LANGUAGE = 'hi';
@@ -42,43 +50,101 @@ interface VyasChantSession {
 
 const emptyStats: OfferingStats = { ok: false, is_new_user: true, counts_30d: {}, recently_used_item_id: null };
 
+// Astro Ved's "chant on your behalf" = Vyas's own "Vyas Chants" mode
+// (looped video, no verification); "Solo Mantra Chant" = Vyas's "You
+// Chant" mode (mic-verified). Maps the chat/path-screen's ChantMode onto
+// VyasMantraRoom's own mode concept for the auto-start handoff.
+function vyasModeFor(path: ChantMode): VyasMode {
+  return path === 'astro_ved' ? 'vyas' : 'user';
+}
+
 function App() {
+  const [screen, setScreen] = useState<Screen>('home');
+  const [flow, setFlow] = useState<FlowType | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [chantPath, setChantPath] = useState<ChantMode>('solo');
+  const [promptIndex, setPromptIndex] = useState(0);
   const [toast, setToast] = useState('');
+  const [expertStep, setExpertStep] = useState(0);
   const [stats, setStats] = useState<OfferingStats>(emptyStats);
 
   const userId = useMemo(() => getUserId(), []);
-  const { screen, flow, selectedId, count, setCount, navigate, goBack } = useBackNavigation(setToast);
 
   const selected = useMemo(
     () => flow && selectedId ? practices[flow].find((item) => item.id === selectedId) ?? null : null,
     [flow, selectedId]
   );
 
-  function openPreferences() {
-    navigate({ screen: 'preferences', flow: null, selectedId: null, count: 0 });
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(''), 1800);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  function goHome() {
+    setScreen('home'); setFlow(null); setSelectedId(null); setExpertStep(0);
+  }
+
+  function goBack() {
+    if (screen === 'room') {
+      if (flow === 'samadhan' || flow === 'mantra') { setScreen('expert'); return; }
+      setScreen('choices'); setSelectedId(null); return;
+    }
+    if (screen === 'expert') { setExpertStep(0); setScreen(flow === 'mantra' ? 'mantraPath' : 'chat'); return; }
+    if (screen === 'mantraPath') { setScreen('choices'); setSelectedId(null); return; }
+    if (screen === 'chat') { setScreen('choices'); setSelectedId(null); return; }
+    if (screen === 'choices') { setScreen('preferences'); setFlow(null); return; }
+    goHome();
   }
 
   function chooseFlow(type: FlowType) {
-    navigate({ screen: 'choices', flow: type, selectedId: null, count: 0 });
+    setFlow(type); setScreen('choices');
     void vedApi.getStats(type, userId).then(setStats);
   }
 
-  function enterRoom(item: PracticeCard) {
+  function selectCategory(item: PracticeCard) {
     if (!flow) return;
-    navigate({ screen: 'room', flow, selectedId: item.id, count: 0 });
+    setSelectedId(item.id);
+    if (flow === 'samadhan') {
+      setScreen('chat');
+      return;
+    }
+    if (flow === 'mantra') {
+      setScreen('mantraPath');
+      return;
+    }
+    setScreen('room');
     void vedApi.start({ type: flow, item_id: item.id, count: 0, user_id: userId });
   }
 
-  function addCount() {
+  function choosePath(path: ChantMode) {
     if (!flow || !selectedId) return;
-    const next = count + 1;
-    setCount(next);
-    if (next % 9 === 0) void vedApi.progress({ type: flow, item_id: selectedId, count: next, user_id: userId });
+    setChantPath(path);
+    if (path === 'astro_ved') {
+      void vedApi.start({ type: flow, item_id: selectedId, count: 0, user_id: userId });
+      // Astro Ved chants on your behalf — that's exactly Vyas's own
+      // "Vyas Chants" mode (looped video, no verification), so hand off
+      // straight into the room, auto-started in that mode.
+      setScreen('room');
+      return;
+    }
+    setExpertStep(0);
+    setScreen('expert');
   }
 
-  function complete() {
+  function advanceExpert() {
     if (!flow || !selectedId) return;
-    void vedApi.complete({ type: flow, item_id: selectedId, count, user_id: userId });
+    if (expertStep >= 2) {
+      setExpertStep(0); setScreen('room');
+      void vedApi.start({ type: flow, item_id: selectedId, count: 0, user_id: userId });
+      return;
+    }
+    setExpertStep((value) => value + 1);
+  }
+
+  function complete(finalCount = 0) {
+    if (!flow || !selectedId) return;
+    void vedApi.complete({ type: flow, item_id: selectedId, count: finalCount, user_id: userId });
     setToast('Practice complete · Shubh din ✦');
   }
 
@@ -86,13 +152,16 @@ function App() {
     <main className="app-shell">
       <Topbar showBack={screen !== 'home'} onBack={goBack} />
       <div className="page-transition" key={screen + (selectedId ?? '')}>
-        {screen === 'home' && <Home onOpen={openPreferences} />}
+        {screen === 'home' && <Home onOpen={() => setScreen('preferences')} />}
         {screen === 'preferences' && <Preferences onChoose={chooseFlow} />}
-        {screen === 'choices' && flow && <Choices flow={flow} stats={stats} onChoose={enterRoom} />}
+        {screen === 'choices' && flow && <Choices flow={flow} stats={stats} onChoose={selectCategory} />}
+        {screen === 'chat' && selected && <SamadhanChat item={selected} onChoosePath={choosePath} />}
+        {screen === 'mantraPath' && selected && <MantraChantPath item={selected} onChoosePath={choosePath} />}
+        {screen === 'expert' && selected && <ExpertIntro item={selected} step={expertStep} onNext={advanceExpert} />}
         {screen === 'room' && flow && selected && (
           flow === 'meditation'
-            ? <MeditationRoom item={selected} onComplete={complete} />
-            : <VyasMantraRoom item={selected} flow={flow} sessionId={userId} onComplete={complete} />
+            ? <MeditationRoom item={selected} promptIndex={promptIndex} onNextPrompt={() => setPromptIndex((value) => (value + 1) % prompts.length)} onComplete={() => complete()} />
+            : <VyasMantraRoom item={selected} flow={flow} sessionId={userId} onComplete={complete} autoStart={{ mode: vyasModeFor(chantPath) }} />
         )}
       </div>
       <div className={`toast ${toast ? 'show' : ''}`} role="status">{toast}</div>
@@ -146,9 +215,7 @@ function Choices({ flow, stats, onChoose }: { flow: FlowType; stats: OfferingSta
     samadhan: ['Mantra Samadhan', 'Kis baat ka samadhan dhoondh rahe hain?', 'Choose what feels closest']
   } satisfies Record<FlowType, [string, string, string]>;
   const [eyebrow, title, description] = headings[flow];
-
   const showUsage = !stats.is_new_user;
-
   return <>
     <PageHead eyebrow={eyebrow} title={title} description={`${description} — card par tap karte hi room shuru ho jayega.`} />
     <section className="choice-grid">
@@ -167,7 +234,231 @@ function Choices({ flow, stats, onChoose }: { flow: FlowType; stats: OfferingSta
   </>;
 }
 
-function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeCard; flow: FlowType; sessionId: string; onComplete: () => void }) {
+// ---- Samadhan chat (Astro Ved) ----
+
+interface ChatMsg { id: number; from: 'bot' | 'user'; text: string; time: string }
+
+function timeNow() {
+  return new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function SamadhanChat({ item, onChoosePath }: { item: PracticeCard; onChoosePath: (path: ChantMode) => void }) {
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [typing, setTyping] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [inputEnabled, setInputEnabled] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [connecting, setConnecting] = useState<ChantMode | null>(null);
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  const activeRef = useRef(true);
+  const idRef = useRef(0);
+  // Guards the intro sequence against React StrictMode's dev-mode double
+  // effect invocation — without this, "Namaste! Main Astro Ved hoon." (and
+  // the question after it) each got appended twice. Refs survive
+  // StrictMode's synthetic mount/cleanup/remount within one component
+  // instance, so this stays true across the double-invoke and only the
+  // real (first) invocation ever runs the sequence.
+  const introStartedRef = useRef(false);
+  const Icon = item.icon;
+  const mantraText = item.mantra ?? item.label;
+
+  useEffect(() => {
+    activeRef.current = true;
+    return () => { activeRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, typing, showOptions]);
+
+  function wait(ms: number) {
+    return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function say(text: string, delay = 700) {
+    setTyping(true);
+    await wait(delay);
+    if (!activeRef.current) return;
+    setTyping(false);
+    setMessages((prev) => [...prev, { id: ++idRef.current, from: 'bot', text, time: timeNow() }]);
+  }
+
+  useEffect(() => {
+    if (introStartedRef.current) return;
+    introStartedRef.current = true;
+    // Human-paced entrance: a brief natural beat, then a Messenger-style typing indicator,
+    // before Astro Ved's greeting lands — never an instant/robotic reply.
+    (async () => {
+      await wait(600);
+      if (!activeRef.current) return;
+      await say('Namaste! Main Astro Ved hoon.', 1600);
+      if (!activeRef.current) return;
+      await wait(700);
+      if (!activeRef.current) return;
+      await say(item.question ?? `Aapke ${item.label.toLowerCase()} mein kya dikkatein aa rahi hain?`, 1800);
+      if (activeRef.current) setInputEnabled(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
+
+  async function sendAnswer() {
+    const text = draft.trim();
+    if (!text) return;
+    setMessages((prev) => [...prev, { id: ++idRef.current, from: 'user', text, time: timeNow() }]);
+    setDraft('');
+    setInputEnabled(false);
+
+    // Reply pacing tuned to feel human, not instant/bot-like:
+    // 3s silent beat, then ~9s of "typing…" before the reassurance lands.
+    await wait(3000);
+    if (!activeRef.current) return;
+    await say('Hum samajhte hain. Aisa mehsoos hona bilkul normal hai — aap akele nahi hain, aur har uljhan ka ek raasta zaroor hota hai.', 9000);
+    if (!activeRef.current) return;
+
+    // ~5s later, the two options land — presented directly (no question),
+    // since the user has no way to know what the options even are.
+    await wait(3500);
+    if (!activeRef.current) return;
+    setTyping(true);
+    await wait(1500);
+    if (!activeRef.current) return;
+    setTyping(false);
+    setMessages((prev) => [...prev, { id: ++idRef.current, from: 'bot', text: 'Yeh dekhiye, do tareeke jinse aap yeh samadhan paa sakte hain:', time: timeNow() }]);
+    setShowOptions(true);
+  }
+
+  async function choose(mode: ChantMode, label: string) {
+    setShowOptions(false);
+    setMessages((prev) => [...prev, { id: ++idRef.current, from: 'user', text: label, time: timeNow() }]);
+
+    // Tap is the identifier that routes to the right module — the connector call below
+    // is the placeholder for that hand-off; the sheet masks its (currently simulated) latency.
+    setConnecting(mode);
+    await connectToChantModule({ mode, mantra: mantraText, targetCount: mode === 'solo' ? SOLO_JAAP_TARGET : undefined });
+    if (!activeRef.current) return;
+    setConnecting(null);
+    onChoosePath(mode);
+  }
+
+  return (
+    <div className="chat-card">
+      <div className="chat-card-header">
+        <span className="chat-avatar-lg" style={{ background: `linear-gradient(135deg, ${item.theme.dark}, ${item.theme.accent})` }}>
+          <Icon size={20} />
+        </span>
+        <span className="chat-header-copy">
+          <b>Astro Ved</b>
+          <small>{item.label} Samadhan</small>
+        </span>
+      </div>
+      <div className="chat-thread" ref={threadRef}>
+        <span className="chat-date-pill">Aaj</span>
+        {messages.map((message) => (
+          <div className={`chat-row ${message.from}`} key={message.id}>
+            <span className={`chat-bubble ${message.from}`}>{message.text}</span>
+            <span className="chat-time">{message.time}</span>
+          </div>
+        ))}
+        {typing && (
+          <div className="chat-row bot">
+            <span className="chat-bubble bot chat-typing"><i /><i /><i /></span>
+          </div>
+        )}
+        {showOptions && (
+          <div className="chat-row bot">
+            <div className="chat-options">
+              <button className="chat-option-card" type="button" onClick={() => choose('solo', 'Solo Mantra Chant')} disabled={!!connecting}>
+                <b>Solo Mantra Chant</b>
+                <span className="chat-option-mantra">{mantraText}</span>
+                <small>Ek expert aapko mantra 3 baar sunayenge, phir aap khud shraddha ke saath jaap karenge.</small>
+              </button>
+              <button className="chat-option-card" type="button" onClick={() => choose('astro_ved', 'Astro Ved')} disabled={!!connecting}>
+                <b>Astro Ved</b>
+                <span className="chat-option-mantra">{mantraText}</span>
+                <small>Astro Ved aapke saath real-time mein yeh mantra chant karega — aap live na ho paayein, tab bhi yeh complete kar diya jaayega.</small>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      {connecting && <ChantConnectingSheet mantra={mantraText} />}
+      {inputEnabled && (
+        <div className="chat-input-bar">
+          <input
+            className="chat-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') void sendAnswer(); }}
+            placeholder="Apna jawaab likhein…"
+            aria-label={item.question}
+          />
+          <button className="chat-send" type="button" onClick={() => void sendAnswer()} disabled={!draft.trim()} aria-label="Send">
+            <Send size={18} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MantraChantPath({ item, onChoosePath }: { item: PracticeCard; onChoosePath: (path: ChantMode) => void }) {
+  const [connecting, setConnecting] = useState<ChantMode | null>(null);
+  const mantraText = item.mantra ?? item.label;
+
+  async function choose(mode: ChantMode) {
+    setConnecting(mode);
+    // Tap is the identifier that routes to the right module — placeholder connector for now.
+    await connectToChantModule({ mode, mantra: mantraText, targetCount: mode === 'solo' ? SOLO_JAAP_TARGET : undefined });
+    onChoosePath(mode);
+  }
+
+  return <>
+    <PageHead eyebrow={mantraText} title="Kaise chant karna chahenge?" description="Apne liye ek tareeka chunein." />
+    <section className="mode-grid">
+      <button className="mode-card" type="button" onClick={() => choose('solo')} disabled={!!connecting}>
+        <span className="mode-icon"><User size={22} /></span>
+        <span className="mode-copy">
+          <h2>Solo Mantra Chant</h2>
+          <p>Ek expert aapko mantra 3 baar sunayenge, phir aap khud shraddha ke saath jaap karenge.</p>
+        </span>
+      </button>
+      <button className="mode-card" type="button" onClick={() => choose('astro_ved')} disabled={!!connecting}>
+        <span className="mode-icon"><Users size={22} /></span>
+        <span className="mode-copy">
+          <h2>Astro Ved</h2>
+          <p>Astro Ved aapke saath real-time mein yeh mantra chant karega — aap live na ho paayein, tab bhi yeh complete kar diya jaayega.</p>
+        </span>
+      </button>
+    </section>
+    {connecting && <ChantConnectingSheet mantra={mantraText} />}
+  </>;
+}
+
+function ChantConnectingSheet({ mantra }: { mantra: string }) {
+  return <div className="sheet-backdrop" role="status" aria-live="polite">
+    <div className="sheet">
+      <div className="sheet-spinner"><i /><i /><i /></div>
+      <p>Badhiya! Main abhi {mantra} ka chant shuru kar raha hoon.</p>
+    </div>
+  </div>;
+}
+
+function ExpertIntro({ item, step, onNext }: { item: PracticeCard; step: number; onNext: () => void }) {
+  const mantraText = item.mantra ?? item.label;
+  return <RoomFrame item={item}>
+    <span className="room-kicker">Expert Aapko Mantra Sunayenge</span>
+    <h1>{mantraText}</h1>
+    <p className="room-desc">Dhyan se sunein — expert yeh mantra 3 baar bolenge.</p>
+    <div className="expert-dots">{Array.from({ length: 3 }).map((_, index) => <i key={index} className={index <= step ? 'active' : ''} />)}</div>
+    <div className="room-actions">
+      <button type="button" onClick={onNext}><Check size={16} /> Maine sun liya ({step + 1}/3)</button>
+    </div>
+  </RoomFrame>;
+}
+
+// ---- Vyas Mantra Room: real voice-verified / video-looped chanting ----
+
+function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item: PracticeCard; flow: FlowType; sessionId: string; onComplete: (count: number) => void; autoStart?: { mode: VyasMode } }) {
   const isSamadhan = flow === 'samadhan';
   // Samadhan cards recommend a mantra by its display label (item.mantra,
   // e.g. "Om Namah Shivaya") rather than by id, since practices.samadhan
@@ -183,9 +474,9 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
   const displayLabel = isSamadhan ? item.mantra ?? item.label : item.label;
   const roomKicker = isSamadhan ? `${item.label} · Aapka mantra samadhan` : 'Mantra Room · Vyas ke saath';
 
-  const [mode, setMode] = useState<VyasMode>('user');
-  const [targetCount, setTargetCount] = useState(VYAS_MAX_CHANTS);
-  const [phase, setPhase] = useState<VyasPhase>('idle');
+  const [mode, setMode] = useState<VyasMode>(autoStart?.mode ?? 'user');
+  const [targetCount, setTargetCount] = useState(SOLO_JAAP_TARGET);
+  const [phase, setPhase] = useState<VyasPhase>(autoStart ? 'running' : 'idle');
   const [remaining, setRemaining] = useState<number | null>(null);
   const [statusText, setStatusText] = useState('');
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -196,6 +487,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
   const ytPlayerRef = useRef<any>(null);
   const ytContainerRef = useRef<HTMLDivElement>(null);
   const ytEndedResolveRef = useRef<(() => void) | null>(null);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -270,6 +562,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
   async function startVyasChantingMode() {
     if (!youtubeId) {
       setErrorText('No video is set up for this mantra yet.');
+      setPhase('idle');
       return;
     }
     const target = clampTarget(targetCount);
@@ -294,7 +587,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
 
     if (completed) {
       setStatusText('Complete! 🕉');
-      onComplete();
+      onComplete(target);
     } else {
       setStatusText('Stopped.');
     }
@@ -357,6 +650,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err: any) {
       setErrorText(`Could not access microphone: ${err.message}`);
+      setPhase('idle');
       return;
     }
 
@@ -548,7 +842,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
   function finishSession(session: VyasChantSession) {
     setStatusText('Complete! 🕉');
     stopChantingSession(session, false);
-    onComplete();
+    onComplete(session.targetCount);
   }
 
   function stopChantingSession(session: VyasChantSession, userInitiated = true) {
@@ -576,6 +870,14 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
     }
   }
 
+  useEffect(() => {
+    if (!autoStart || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    if (autoStart.mode === 'vyas') void startVyasChantingMode();
+    else void startChantingSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <RoomFrame item={item}>
       <span className="room-kicker">{roomKicker}</span>
@@ -583,19 +885,21 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
       {isSamadhan && <span className="samadhan-note">Recommended for your selected category</span>}
 
       <div className="vyas-figure">
-        {!videoVisible && <img src="/vyas-portrait.png" alt="Vyas, a seated sage beneath a banyan tree" />}
+        {!videoVisible && <img src="/vyas-portrait.png" alt="Vyas" />}
         <div className="vyas-video-wrap" hidden={!videoVisible}>
           <div ref={ytContainerRef} />
         </div>
       </div>
       <p className="vyas-status">{statusText || (phase === 'idle' ? 'Vyas is ready.' : '')}</p>
 
-      <div className="mode-toggle">
-        <button type="button" className={`mode-btn ${mode === 'user' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('user')}>You Chant</button>
-        <button type="button" className={`mode-btn ${mode === 'vyas' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('vyas')}>Vyas Chants</button>
-      </div>
+      {!autoStart && (
+        <div className="mode-toggle">
+          <button type="button" className={`mode-btn ${mode === 'user' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('user')}>You Chant</button>
+          <button type="button" className={`mode-btn ${mode === 'vyas' ? 'active' : ''}`} disabled={phase !== 'idle'} onClick={() => setMode('vyas')}>Vyas Chants</button>
+        </div>
+      )}
 
-      {phase === 'idle' && (
+      {!autoStart && phase === 'idle' && (
         <label className="target-count-label">
           Number of chants (1–{VYAS_MAX_CHANTS})
           <input
@@ -617,7 +921,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
       )}
 
       <div className="room-actions">
-        {phase === 'idle' && <button type="button" onClick={handleStart}>Start</button>}
+        {phase === 'idle' && !autoStart && <button type="button" onClick={handleStart}>Start</button>}
         {phase === 'running' && <button type="button" onClick={handleStop}>Stop</button>}
         {phase === 'paused' && <button type="button" onClick={resumeSession}>Resume</button>}
       </div>
@@ -627,63 +931,15 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete }: { item: PracticeC
   );
 }
 
-function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: () => void }) {
-  const [completed, setCompleted] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<any>(null);
-
-  function logCompletionOnce() {
-    if (completed) return;
-    setCompleted(true);
-    playerRef.current?.pauseVideo?.();
-    onComplete();
-  }
-
-  useEffect(() => {
-    if (!item.youtubeId || !containerRef.current) return;
-    let cancelled = false;
-
-    loadYouTubeApi().then((YT) => {
-      if (cancelled || !containerRef.current) return;
-      playerRef.current = new YT.Player(containerRef.current, {
-        width: '100%',
-        height: '100%',
-        videoId: item.youtubeId,
-        // No user control at all — no scrub bar, no click-to-pause (that's
-        // also why the iframe has pointer-events:none in CSS), no keyboard
-        // shortcuts. Starts itself; the only way to stop it early is
-        // Mark Complete, which explicitly calls pauseVideo() above.
-        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, modestbranding: 1, autoplay: 1 },
-        events: {
-          onReady: (event: any) => event.target.playVideo(),
-          onStateChange: (event: any) => {
-            if (event.data === YT.PlayerState.ENDED) logCompletionOnce();
-          }
-        }
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      if (playerRef.current && playerRef.current.destroy) playerRef.current.destroy();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id]);
-
-  if (!item.youtubeId) {
-    return <RoomFrame item={item}>
-      <span className="room-kicker">Meditation Room</span><h1>{item.label}</h1>
-      <p className="room-desc">Video coming soon for this practice.</p>
-    </RoomFrame>;
-  }
-
+function MeditationRoom({ item, promptIndex, onNextPrompt, onComplete }: { item: PracticeCard; promptIndex: number; onNextPrompt: () => void; onComplete: () => void }) {
   return <RoomFrame item={item}>
     <span className="room-kicker">Meditation Room</span><h1>{item.label}</h1>
-    <div className="meditation-video-wrap"><div ref={containerRef} /></div>
+    {item.id === 'vagus' && <><div className="breath-stage"><div className="wave">{Array.from({ length: 7 }).map((_, index) => <i key={index} />)}</div></div><p className="room-desc">Wave upar jaaye toh inhale, neeche aaye toh exhale.</p></>}
+    {item.id === 'guided' && <><div className="breath-stage"><div className="breath-orb"><span>◉</span></div></div><p className="room-desc">Mere saath: dheere inhale… hold… aur gently exhale.</p></>}
+    {item.id === 'affirmation' && <><div className="breath-stage"><div><div className="prompt">{prompts[promptIndex]}</div><div className="prompt-dots">{prompts.map((_, index) => <i key={index} className={index === promptIndex ? 'active' : ''} />)}</div></div></div><div className="room-actions"><button type="button" onClick={onNextPrompt}>Next prompt <ChevronRight size={16} /></button></div></>}
+    {item.id === 'box' && <><div className="breath-stage"><div className="breath-orb box-breath"><span>4 · 4 · 4 · 4</span></div></div><p className="room-desc">Inhale · Hold · Exhale · Hold — har step 4 counts.</p></>}
     <div className="room-actions">
-      <button type="button" onClick={logCompletionOnce} disabled={completed}>
-        <Check size={16} /> {completed ? 'Completed' : 'Mark Complete'}
-      </button>
+      <button type="button" onClick={onComplete}><Check size={16} /> Mark Complete</button>
     </div>
   </RoomFrame>;
 }

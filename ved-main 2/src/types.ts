@@ -3,7 +3,7 @@ import type { ComponentType } from 'react';
 export type IconComponent = ComponentType<{ size?: number | string; className?: string }>;
 
 export type FlowType = 'mantra' | 'meditation' | 'samadhan';
-export type Screen = 'home' | 'preferences' | 'choices' | 'room';
+export type Screen = 'home' | 'preferences' | 'choices' | 'chat' | 'mantraPath' | 'expert' | 'room';
 
 export interface Theme {
   dark: string;
@@ -17,7 +17,8 @@ export interface PracticeCard {
   icon: IconComponent;
   theme: Theme;
   mantra?: string;
-  youtubeId?: string;
+  /** Only set for samadhan (problem) cards — the intake question asked before the reassurance + path screens. */
+  question?: string;
 }
 
 export interface SessionPayload {
