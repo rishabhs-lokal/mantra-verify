@@ -8,16 +8,9 @@ import type { FlowType, OfferingStats, PracticeCard, Screen } from './types';
 import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
 import { vyasMantraConfig } from './vyasMantras';
-import { API_BASE } from './apiBase';
+import { meditationVideoConfig } from './meditationVideos';
 
-const prompts = [
-  'Main shant hoon.',
-  'Main kaafi hoon.',
-  'Main apne aap par bharosa karta hoon.',
-  'Aaj main gratitude choose karta hoon.'
-];
-
-const VYAS_API_BASE = `${API_BASE}/vyas`;
+const VYAS_API_BASE = '/api/vyas';
 const VYAS_LANGUAGE = 'hi';
 const VYAS_MAX_CHANTS = 12;
 const VYAS_SPEECH_RMS_THRESHOLD = 0.02;
@@ -64,7 +57,6 @@ function App() {
   const [flow, setFlow] = useState<FlowType | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chantPath, setChantPath] = useState<ChantMode>('solo');
-  const [promptIndex, setPromptIndex] = useState(0);
   const [toast, setToast] = useState('');
   const [expertStep, setExpertStep] = useState(0);
   const [stats, setStats] = useState<OfferingStats>(emptyStats);
@@ -161,7 +153,7 @@ function App() {
         {screen === 'expert' && selected && <ExpertIntro item={selected} step={expertStep} onNext={advanceExpert} />}
         {screen === 'room' && flow && selected && (
           flow === 'meditation'
-            ? <MeditationRoom item={selected} promptIndex={promptIndex} onNextPrompt={() => setPromptIndex((value) => (value + 1) % prompts.length)} onComplete={() => complete()} />
+            ? <MeditationRoom item={selected} onComplete={() => complete()} />
             : <VyasMantraRoom item={selected} flow={flow} sessionId={userId} onComplete={complete} autoStart={{ mode: vyasModeFor(chantPath) }} />
         )}
       </div>
@@ -932,13 +924,48 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
   );
 }
 
-function MeditationRoom({ item, promptIndex, onNextPrompt, onComplete }: { item: PracticeCard; promptIndex: number; onNextPrompt: () => void; onComplete: () => void }) {
+function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: () => void }) {
+  const youtubeId = meditationVideoConfig[item.id] ?? null;
+  const ytPlayerRef = useRef<any>(null);
+  const ytContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!youtubeId) return;
+    let cancelled = false;
+
+    async function mountPlayer() {
+      const YT = await loadYouTubeApi();
+      if (cancelled) return;
+      // loop:1 + playlist:<same id> is the standard YT embed trick for
+      // looping a single video indefinitely — no manual onStateChange/
+      // reload handling needed here, unlike the Mantra Room's Vyas Chants
+      // mode, which loops because it's counting reps, not just playing.
+      const player = new YT.Player(ytContainerRef.current, {
+        width: '100%',
+        height: '100%',
+        videoId: youtubeId,
+        playerVars: { playsinline: 1, rel: 0, controls: 0, modestbranding: 1, loop: 1, playlist: youtubeId },
+        events: { onReady: (event: any) => event.target.playVideo() }
+      });
+      ytPlayerRef.current = player;
+    }
+    void mountPlayer();
+
+    return () => {
+      cancelled = true;
+      if (ytPlayerRef.current?.destroy) ytPlayerRef.current.destroy();
+      ytPlayerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeId]);
+
   return <RoomFrame item={item}>
     <span className="room-kicker">Meditation Room</span><h1>{item.label}</h1>
-    {item.id === 'vagus' && <><div className="breath-stage"><div className="wave">{Array.from({ length: 7 }).map((_, index) => <i key={index} />)}</div></div><p className="room-desc">Wave upar jaaye toh inhale, neeche aaye toh exhale.</p></>}
-    {item.id === 'guided' && <><div className="breath-stage"><div className="breath-orb"><span>◉</span></div></div><p className="room-desc">Mere saath: dheere inhale… hold… aur gently exhale.</p></>}
-    {item.id === 'affirmation' && <><div className="breath-stage"><div><div className="prompt">{prompts[promptIndex]}</div><div className="prompt-dots">{prompts.map((_, index) => <i key={index} className={index === promptIndex ? 'active' : ''} />)}</div></div></div><div className="room-actions"><button type="button" onClick={onNextPrompt}>Next prompt <ChevronRight size={16} /></button></div></>}
-    {item.id === 'box' && <><div className="breath-stage"><div className="breath-orb box-breath"><span>4 · 4 · 4 · 4</span></div></div><p className="room-desc">Inhale · Hold · Exhale · Hold — har step 4 counts.</p></>}
+    <div className="vyas-figure">
+      {youtubeId
+        ? <div className="vyas-video-wrap"><div ref={ytContainerRef} /></div>
+        : <p className="room-desc">No video is set up for this practice yet.</p>}
+    </div>
     <div className="room-actions">
       <button type="button" onClick={onComplete}><Check size={16} /> Mark Complete</button>
     </div>
