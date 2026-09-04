@@ -12,17 +12,3 @@ services:
         sync: false
       - key: SHEETS_SHARED_SECRET
         sync: false
-
-  - type: web
-    name: ved-frontend
-    runtime: static
-    rootDir: ved-main 2
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    routes:
-      # Vite's dev-only "/api" proxy doesn't exist in the static build —
-      # this plays that role in production, forwarding to the real
-      # deployed backend URL.
-      - type: rewrite
-        source: /api/*
-        destination: https://mantra-verify-ngab.onrender.com/api/*
