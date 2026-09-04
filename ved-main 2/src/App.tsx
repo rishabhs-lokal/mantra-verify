@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronRight, Send, Sparkles, User, Users } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Send, User, Users } from 'lucide-react';
 import { vedApi } from './api';
 import { practices, preferences, SOLO_JAAP_TARGET } from './data';
 import { connectToChantModule } from './connector';
@@ -54,7 +54,7 @@ function vyasModeFor(path: ChantMode): VyasMode {
 }
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('home');
+  const [screen, setScreen] = useState<Screen>('preferences');
   const [flow, setFlow] = useState<FlowType | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chantPath, setChantPath] = useState<ChantMode>('solo');
@@ -75,8 +75,8 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  function goHome() {
-    setScreen('home'); setFlow(null); setSelectedId(null); setExpertStep(0);
+  function resetToPreferences() {
+    setScreen('preferences'); setFlow(null); setSelectedId(null); setExpertStep(0);
   }
 
   function goBack() {
@@ -88,7 +88,7 @@ function App() {
     if (screen === 'mantraPath') { setScreen('choices'); setSelectedId(null); return; }
     if (screen === 'chat') { setScreen('choices'); setSelectedId(null); return; }
     if (screen === 'choices') { setScreen('preferences'); setFlow(null); return; }
-    goHome();
+    resetToPreferences();
   }
 
   function chooseFlow(type: FlowType) {
@@ -144,9 +144,8 @@ function App() {
 
   return (
     <main className="app-shell">
-      <Topbar showBack={screen !== 'home'} onBack={goBack} />
+      <Topbar showBack={screen !== 'preferences'} onBack={goBack} />
       <div className="page-transition" key={screen + (selectedId ?? '')}>
-        {screen === 'home' && <Home onOpen={() => setScreen('preferences')} />}
         {screen === 'preferences' && <Preferences onChoose={chooseFlow} />}
         {screen === 'choices' && flow && <Choices flow={flow} stats={stats} onChoose={selectCategory} />}
         {screen === 'chat' && selected && <SamadhanChat item={selected} onChoosePath={choosePath} />}
@@ -170,20 +169,6 @@ function Topbar({ showBack, onBack }: { showBack: boolean; onBack: () => void })
     </button>
     {showBack && <button className="ghost-button" type="button" onClick={onBack}><ArrowLeft size={17} /> Back</button>}
   </header>;
-}
-
-function Home({ onOpen }: { onOpen: () => void }) {
-  return <>
-    <button className="hero-banner" type="button" onClick={onOpen}>
-      <span className="hero-copy">
-        <strong>Roz thoda sa sukoon.</strong>
-        <span className="hero-sub">Mantra, meditation aur samadhan </span>
-        <span className="hero-action">Apni practice chunein <i><ChevronRight size={18} /></i></span>
-      </span>
-      <span className="hero-symbol" aria-hidden="true">ॐ</span>
-    </button>
-    <p className="home-note"><Sparkles size={15} /> Aapki daily spiritual space</p>
-  </>;
 }
 
 function Preferences({ onChoose }: { onChoose: (type: FlowType) => void }) {
@@ -475,6 +460,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
   const [statusText, setStatusText] = useState('');
   const [errorText, setErrorText] = useState<string | null>(null);
   const [videoVisible, setVideoVisible] = useState(false);
+  const [malaCompleted, setMalaCompleted] = useState(false);
 
   const sessionRef = useRef<VyasChantSession | null>(null);
   const vyasModeRunningRef = useRef(false);
@@ -566,6 +552,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
     setRemaining(target);
     setStatusText('');
     setErrorText(null);
+    setMalaCompleted(false);
 
     for (let rem = target; rem > 0; rem--) {
       if (!vyasModeRunningRef.current) break;
@@ -575,12 +562,13 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
     }
 
     setVideoVisible(false);
-    const completed = vyasModeRunningRef.current;
+    const finishedNaturally = vyasModeRunningRef.current;
     vyasModeRunningRef.current = false;
     setPhase('idle');
 
-    if (completed) {
+    if (finishedNaturally) {
       setStatusText('Complete! 🕉');
+      setMalaCompleted(true);
       onComplete(target);
     } else {
       setStatusText('Stopped.');
@@ -630,6 +618,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
 
   async function startChantingSession() {
     setErrorText(null);
+    setMalaCompleted(false);
     const target = clampTarget(targetCount);
     setTargetCount(target);
 
@@ -835,6 +824,7 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
 
   function finishSession(session: VyasChantSession) {
     setStatusText('Complete! 🕉');
+    setMalaCompleted(true);
     stopChantingSession(session, false);
     onComplete(session.targetCount);
   }
@@ -920,6 +910,14 @@ function VyasMantraRoom({ item, flow, sessionId, onComplete, autoStart }: { item
         {phase === 'paused' && <button type="button" onClick={resumeSession}>Resume</button>}
       </div>
 
+      {malaCompleted && (
+        <div className="room-actions">
+          <a className="cta-link" href="https://astrolokal.onelink.me/IE0Y/wpa10g7p" target="_blank" rel="noopener noreferrer">
+            Connect to Astrologer
+          </a>
+        </div>
+      )}
+
       {errorText && <div className="error">{errorText}</div>}
     </RoomFrame>
   );
@@ -929,6 +927,9 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
   const youtubeId = meditationVideoConfig[item.id] ?? null;
   const ytPlayerRef = useRef<any>(null);
   const ytContainerRef = useRef<HTMLDivElement>(null);
+  const [videoEnded, setVideoEnded] = useState(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     if (!youtubeId) return;
@@ -937,10 +938,6 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
     async function mountPlayer() {
       const YT = await loadYouTubeApi();
       if (cancelled) return;
-      // loop:1 + playlist:<same id> is the standard YT embed trick for
-      // looping a single video indefinitely — no manual onStateChange/
-      // reload handling needed here, unlike the Mantra Room's Vyas Chants
-      // mode, which loops because it's counting reps, not just playing.
       const player = new YT.Player(ytContainerRef.current, {
         width: '100%',
         height: '100%',
@@ -949,8 +946,18 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
         // iframe) is what makes this genuinely un-controllable by the user
         // rather than just visually hiding YouTube's own controls bar —
         // was an explicit earlier requirement for the meditation video.
-        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, modestbranding: 1, loop: 1, playlist: youtubeId },
-        events: { onReady: (event: any) => event.target.playVideo() }
+        // No loop/playlist here (unlike the Mantra Room's looped chant
+        // video) — this plays once, then ENDED reveals the therapist CTA.
+        playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, modestbranding: 1 },
+        events: {
+          onReady: (event: any) => event.target.playVideo(),
+          onStateChange: (event: any) => {
+            if (event.data === window.YT.PlayerState.ENDED) {
+              setVideoEnded(true);
+              onCompleteRef.current();
+            }
+          }
+        }
       });
       ytPlayerRef.current = player;
     }
@@ -971,9 +978,13 @@ function MeditationRoom({ item, onComplete }: { item: PracticeCard; onComplete: 
         ? <div className="vyas-video-wrap"><div ref={ytContainerRef} /></div>
         : <p className="room-desc">No video is set up for this practice yet.</p>}
     </div>
-    <div className="room-actions">
-      <button type="button" onClick={onComplete}><Check size={16} /> Mark Complete</button>
-    </div>
+    {videoEnded && (
+      <div className="room-actions">
+        <a className="cta-link" href="https://vm.ltd/EAZEPP/MKHbbE" target="_blank" rel="noopener noreferrer">
+          Connect to Therapist
+        </a>
+      </div>
+    )}
   </RoomFrame>;
 }
 
