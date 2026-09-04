@@ -17,6 +17,7 @@ export interface PracticeCard {
   icon: IconComponent;
   theme: Theme;
   mantra?: string;
+  youtubeId?: string;
 }
 
 export interface SessionPayload {
