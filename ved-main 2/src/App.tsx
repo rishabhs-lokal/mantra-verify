@@ -8,6 +8,7 @@ import type { FlowType, OfferingStats, PracticeCard, Screen } from './types';
 import { getUserId } from './uid';
 import { loadYouTubeApi } from './youtube';
 import { vyasMantraConfig } from './vyasMantras';
+import { API_BASE } from './apiBase';
 
 const prompts = [
   'Main shant hoon.',
@@ -16,7 +17,7 @@ const prompts = [
   'Aaj main gratitude choose karta hoon.'
 ];
 
-const VYAS_API_BASE = '/api/vyas';
+const VYAS_API_BASE = `${API_BASE}/vyas`;
 const VYAS_LANGUAGE = 'hi';
 const VYAS_MAX_CHANTS = 12;
 const VYAS_SPEECH_RMS_THRESHOLD = 0.02;

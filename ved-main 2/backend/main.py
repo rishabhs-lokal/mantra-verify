@@ -4,6 +4,7 @@ from typing import Literal, Optional
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 # Voice-verified mantra japa counting (transcription, matching, Vyas's
@@ -18,6 +19,18 @@ load_dotenv()
 
 app = FastAPI(title="Ved API", version="2.1")
 app.include_router(vyas_router, prefix="/api/vyas", tags=["vyas"])
+
+# The deployed frontend calls this backend's absolute URL directly rather
+# than through a same-origin proxy — Render's static sites don't parse a
+# Netlify-style _redirects file, and the dashboard's Redirects/Rewrites UI
+# wasn't reachable for this account. CORS is what makes that direct,
+# cross-origin call work instead.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 SHEETS_WEBAPP_URL = os.getenv("SHEETS_WEBAPP_URL", "").strip()
 SHEETS_SHARED_SECRET = os.getenv("SHEETS_SHARED_SECRET", "").strip()
