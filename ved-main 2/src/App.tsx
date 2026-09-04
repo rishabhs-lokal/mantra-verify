@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Check, ChevronRight, RotateCcw, Sparkles } from 'lucide-react';
 import { vedApi } from './api';
 import { practices, preferences } from './data';
-import type { FlowType, PracticeCard } from './types';
+import type { FlowType, OfferingStats, PracticeCard } from './types';
 import { useBackNavigation } from './useBackNavigation';
+import { getUserId } from './uid';
 
 const prompts = [
   'Main shant hoon.',
@@ -12,10 +13,14 @@ const prompts = [
   'Aaj main gratitude choose karta hoon.'
 ];
 
+const emptyStats: OfferingStats = { ok: false, is_new_user: true, counts_30d: {}, recently_used_item_id: null };
+
 function App() {
   const [promptIndex, setPromptIndex] = useState(0);
   const [toast, setToast] = useState('');
+  const [stats, setStats] = useState<OfferingStats>(emptyStats);
 
+  const userId = useMemo(() => getUserId(), []);
   const { screen, flow, selectedId, count, setCount, navigate, goBack } = useBackNavigation(setToast);
 
   const selected = useMemo(
@@ -35,24 +40,25 @@ function App() {
 
   function chooseFlow(type: FlowType) {
     navigate({ screen: 'choices', flow: type, selectedId: null, count: 0 });
+    void vedApi.getStats(type, userId).then(setStats);
   }
 
   function enterRoom(item: PracticeCard) {
     if (!flow) return;
     navigate({ screen: 'room', flow, selectedId: item.id, count: 0 });
-    void vedApi.start({ type: flow, item_id: item.id, count: 0 });
+    void vedApi.start({ type: flow, item_id: item.id, count: 0, user_id: userId });
   }
 
   function addCount() {
     if (!flow || !selectedId) return;
     const next = count + 1;
     setCount(next);
-    if (next % 9 === 0) void vedApi.progress({ type: flow, item_id: selectedId, count: next });
+    if (next % 9 === 0) void vedApi.progress({ type: flow, item_id: selectedId, count: next, user_id: userId });
   }
 
   function complete() {
     if (!flow || !selectedId) return;
-    void vedApi.complete({ type: flow, item_id: selectedId, count });
+    void vedApi.complete({ type: flow, item_id: selectedId, count, user_id: userId });
     setToast('Practice complete · Shubh din ✦');
   }
 
@@ -62,7 +68,7 @@ function App() {
       <div className="page-transition" key={screen + (selectedId ?? '')}>
         {screen === 'home' && <Home onOpen={openPreferences} />}
         {screen === 'preferences' && <Preferences onChoose={chooseFlow} />}
-        {screen === 'choices' && flow && <Choices flow={flow} onChoose={enterRoom} />}
+        {screen === 'choices' && flow && <Choices flow={flow} stats={stats} onChoose={enterRoom} />}
         {screen === 'room' && flow && selected && (
           flow === 'meditation'
             ? <MeditationRoom item={selected} promptIndex={promptIndex} onNextPrompt={() => setPromptIndex((value) => (value + 1) % prompts.length)} />
@@ -87,7 +93,6 @@ function Home({ onOpen }: { onOpen: () => void }) {
   return <>
     <button className="hero-banner" type="button" onClick={onOpen}>
       <span className="hero-copy">
-        
         <strong>Roz thoda sa sukoon.</strong>
         <span className="hero-sub">Mantra, meditation aur samadhan </span>
         <span className="hero-action">Apni practice chunein <i><ChevronRight size={18} /></i></span>
@@ -102,7 +107,7 @@ function Preferences({ onChoose }: { onChoose: (type: FlowType) => void }) {
   return <>
     <PageHead eyebrow="Choose your path" title="Aaj aapko kya chahiye?" description="Ek option chunein — phir themed card se seedha apne room mein jaayein." />
     <section className="preference-grid">
-      {preferences.map((item, index) => {
+      {preferences.map((item) => {
         const Icon = item.icon;
         return <button className="pref-card" type="button" key={item.id} onClick={() => onChoose(item.id)}>
           <span className="pref-icon"><Icon size={24} /></span>
@@ -114,21 +119,28 @@ function Preferences({ onChoose }: { onChoose: (type: FlowType) => void }) {
   </>;
 }
 
-function Choices({ flow, onChoose }: { flow: FlowType; onChoose: (item: PracticeCard) => void }) {
+function Choices({ flow, stats, onChoose }: { flow: FlowType; stats: OfferingStats; onChoose: (item: PracticeCard) => void }) {
   const headings = {
     mantra: ['Mantra Chant', 'Kaunsa mantra aaj aapke saath chalega?', '4 canonical mantras'],
     meditation: ['Meditation', 'Apne mood ke hisaab se practice chunein.', '4 mindful practices'],
     samadhan: ['Mantra Samadhan', 'Kis baat ka samadhan dhoondh rahe hain?', 'Choose what feels closest']
   } satisfies Record<FlowType, [string, string, string]>;
   const [eyebrow, title, description] = headings[flow];
+
+  const showUsage = !stats.is_new_user;
+
   return <>
     <PageHead eyebrow={eyebrow} title={title} description={`${description} — card par tap karte hi room shuru ho jayega.`} />
     <section className="choice-grid">
       {practices[flow].map((item) => {
         const Icon = item.icon;
+        const usedCount = stats.counts_30d[item.id] ?? 0;
+        const isRecent = showUsage && stats.recently_used_item_id === item.id;
         return <button className="choice-card" type="button" key={item.id} onClick={() => onChoose(item)} style={{ borderColor: `${item.theme.accent}22` }}>
+          {isRecent && <span className="recently-used-tag">Recently Used</span>}
           <span className="choice-icon" style={{ background: `linear-gradient(135deg, ${item.theme.dark}, ${item.theme.accent})` }}><Icon size={22} /></span>
           <span className="choice-copy"><h2>{item.label}</h2><p>{item.description}</p></span>
+          {showUsage && usedCount > 0 && <span className="usage-streak">Used {usedCount} times in the last 30 days</span>}
         </button>;
       })}
     </section>
